@@ -63,13 +63,25 @@ export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNode
   if (_cachedWallet) return _cachedWallet;
   warnIfNoPassphrase();
   if (fs.existsSync(WALLET_FILE)) {
+    const encrypted = fs.readFileSync(WALLET_FILE, "utf8");
     try {
-      const encrypted = fs.readFileSync(WALLET_FILE, "utf8");
       const wallet = await ethers.Wallet.fromEncryptedJson(encrypted, getMachineKey());
       _cachedWallet = wallet;
       return wallet;
-    } catch {
-      // fall through to create new wallet
+    } catch (err: any) {
+      // A wallet file already exists but couldn't be decrypted - this almost
+      // always means NOELCLAW_WALLET_PASSPHRASE (or the machine info the key
+      // is derived from) doesn't match what encrypted it. Silently creating
+      // a fresh wallet here would overwrite the existing encrypted file,
+      // orphaning it and any funds it controls. Refuse instead.
+      throw new Error(
+        `Could not decrypt existing wallet at ${WALLET_FILE}: ${err?.message ?? "unknown error"}\n\n` +
+        `This usually means NOELCLAW_WALLET_PASSPHRASE doesn't match the passphrase ` +
+        `used when this wallet was encrypted (or this is a different machine). ` +
+        `Refusing to auto-create a replacement wallet, since that would silently ` +
+        `orphan the existing one and any funds it holds.\n\n` +
+        `If you're sure this wallet should be abandoned, move or delete ${WALLET_FILE} manually first.`
+      );
     }
   }
   const wallet = ethers.Wallet.createRandom();
