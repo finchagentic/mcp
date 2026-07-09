@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.6] - 2026-07-09
+
+### Fixed
+
+- **Critical:** `getOrCreateWallet` silently generated and saved a brand-new random wallet whenever the existing `wallet.json` failed to decrypt (wrong/missing `NOELCLAW_WALLET_PASSPHRASE`, different machine, etc.), overwriting the file with zero warning — orphaning the previous wallet and any funds it held. Now throws a clear error instead of auto-replacing the file; only creates a new wallet when none exists yet.
+
 ## [3.32.5] - 2026-07-09
 
 ### Fixed
