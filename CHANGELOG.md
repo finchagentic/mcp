@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.5] - 2026-07-09
+
+### Fixed
+
+- `score_token` returned data for the wrong token when the queried address was the *quote* currency (not base) in the top-liquidity DexScreener pair — e.g. checking USDC returned AERO's price and score. Now filters to pairs where the queried address is the base token; returns a clear error if the token never appears as a base token instead of silently scoring the wrong asset. Matters most for stablecoins/RWA tokens (B20), which are frequently paired as the quote side.
+
 ## [3.32.4] - 2026-06-26
 
 ### Fixed

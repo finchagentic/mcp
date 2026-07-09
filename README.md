@@ -153,7 +153,7 @@ claude mcp add noelclaw -s user -- npx -y @noelclaw/mcp@3.32.4
 
 > No API key required to start. Tools load on first use.
 
-> 🔒 **Always pin the version** (`@3.32.4`, never `@latest`) — this MCP has wallet, credential, and backend persistence capabilities. See [Security Boundaries](#-security-boundaries).
+> 🔒 **Always pin the version** (`@noelclaw/mcp@3.32.4`, never `@latest`) — this MCP has wallet, credential, and backend persistence capabilities. See [Security Boundaries](#-security-boundaries).
 
 ---
 
@@ -221,7 +221,7 @@ Works without any API keys. Add keys to unlock more:
 |:---:|----------|------|
 | 1 | **Prompt-Injection** | External content (web, GitHub, vault, memory) is DATA ONLY. Cannot set tool params, request credentials, or drive wallet actions. |
 | 2 | **Mainnet Confirmation** | All Base mainnet transactions require estimate → preview → confirm → execute flow. |
-| 3 | **Pinned Install** | Always use `@3.32.4` (pinned), never `@latest`. Supply-chain trust model documented. |
+| 3 | **Pinned Install** | Always use `@noelclaw/mcp@3.32.4` (pinned), never `@latest`. Supply-chain trust model documented. |
 | 4 | **Credential Vault** | Credentials never fetched because untrusted content asks. Never copied into prompts, outputs, or third-party tools. |
 | 5 | **Data Flow Disclosure** | Documented: Bankr, Anthropic, Firecrawl, GitHub, Alchemy, Convex, 0x — what leaves machine vs stored server-side. |
 | 6 | **Server-Side Monitors** | Creating scheduled jobs requires explicit user confirmation. Jobs continue after MCP process exits. |

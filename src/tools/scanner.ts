@@ -319,11 +319,11 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
 
     const data = await fetchJson(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
     const pair = (data.pairs ?? [])
-      .filter((p: any) => p.chainId === "base")
+      .filter((p: any) => p.chainId === "base" && p.baseToken?.address?.toLowerCase() === address.toLowerCase())
       .sort((a: any, b: any) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
 
     if (!pair) {
-      return { content: [{ type: "text", text: `No Base trading pair found for \`${address}\`. Check the address or try a different token.` }], isError: true };
+      return { content: [{ type: "text", text: `No Base trading pair found where \`${address}\` is the base token (it may only appear as a quote currency, e.g. a stablecoin). Check the address or try a different token.` }], isError: true };
     }
 
     const c: Candidate = {
