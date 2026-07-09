@@ -153,15 +153,30 @@ async function fetchBaseBalances(address: string): Promise<string> {
     return "Invalid address.";
   }
 
-  // ETH balance
+  // ETH balance + live price (parallel)
+  let ethRaw = 0;
   let ethStr = "?";
-  try {
-    const ethHex = await rpcCall("eth_getBalance", [address, "latest"]);
-    const eth = Number(BigInt(ethHex)) / 1e18;
-    ethStr = eth.toFixed(6);
-  } catch (e: any) {
-    ethStr = `error: ${e?.message ?? "rpc fail"}`;
+  let ethPrice: number | null = null;
+
+  const [ethResult, priceResult] = await Promise.allSettled([
+    rpcCall("eth_getBalance", [address, "latest"]),
+    fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd", {
+      signal: AbortSignal.timeout(5000),
+    }).then(r => r.json()),
+  ]);
+
+  if (ethResult.status === "fulfilled") {
+    ethRaw = Number(BigInt(ethResult.value)) / 1e18;
+    ethStr = ethRaw.toFixed(6);
+  } else {
+    ethStr = `error: ${(ethResult.reason as any)?.message ?? "rpc fail"}`;
   }
+
+  if (priceResult.status === "fulfilled") {
+    ethPrice = (priceResult.value as any)?.ethereum?.usd ?? null;
+  }
+
+  const ethUsd = ethPrice && ethRaw ? `≈ $${(ethRaw * ethPrice).toFixed(2)} USD` : "";
 
   // ERC-20 balances
   const erc20Results: Array<{ symbol: string; balance: string }> = [];
@@ -177,12 +192,13 @@ async function fetchBaseBalances(address: string): Promise<string> {
   }
 
   const lines: string[] = [`**Wallet**: \`${address}\``, ``, `**Balances on Base mainnet:**`];
-  lines.push(`- ETH: ${ethStr}`);
+  lines.push(`- ETH: ${ethStr}${ethUsd ? ` (${ethUsd})` : ""}`);
   if (erc20Results.length === 0) {
     lines.push(`- (no ERC-20 token balances)`);
   } else {
     for (const r of erc20Results) lines.push(`- ${r.symbol}: ${r.balance}`);
   }
+  if (ethPrice) lines.push(``, `ETH price: $${ethPrice.toLocaleString()} · source: CoinGecko`);
   lines.push(``, `_Source: Base RPC (mainnet.base.org) · queried directly._`);
   return lines.join("\n");
 }

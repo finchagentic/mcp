@@ -45,8 +45,23 @@ export function getMachineKey(): string {
     .slice(0, 32);
 }
 
+let _passphraseWarned = false;
+function warnIfNoPassphrase(): void {
+  if (_passphraseWarned || process.env.NOELCLAW_WALLET_PASSPHRASE) return;
+  _passphraseWarned = true;
+  // stderr only - stdout is reserved for MCP JSON-RPC framing when running as a server.
+  process.stderr.write(
+    "\n⚠️  NOELCLAW_WALLET_PASSPHRASE is not set. Your Base mainnet wallet " +
+    `(${WALLET_FILE}) is encrypted with a key derived only from this machine's ` +
+    "hostname/platform/arch - low entropy, and crackable by anyone who copies the " +
+    "file (backup sync, stolen disk, malware). Set NOELCLAW_WALLET_PASSPHRASE to a " +
+    "strong secret for real protection. This wallet holds real funds.\n\n"
+  );
+}
+
 export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet> {
   if (_cachedWallet) return _cachedWallet;
+  warnIfNoPassphrase();
   if (fs.existsSync(WALLET_FILE)) {
     try {
       const encrypted = fs.readFileSync(WALLET_FILE, "utf8");

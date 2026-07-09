@@ -61,7 +61,7 @@ async function checkForUpdate(current: string): Promise<void> {
     process.stderr.write(
       `\n  ${C.yellow}â•"â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•-${C.reset}\n` +
       `  ${C.yellow}â•'${C.reset}  ðŸ"¦  Update available: ${C.yellow}v${current}${C.reset} â†' ${C.cyan}v${latest}${C.reset}                         ${C.yellow}â•'${C.reset}\n` +
-      `  ${C.yellow}â•'${C.reset}  Run: ${C.cyan}npx @noelclaw/mcp@latest${C.reset} to get the latest tools     ${C.yellow}â•'${C.reset}\n` +
+      `  ${C.yellow}â•'${C.reset}  Run: ${C.cyan}npm install -g @noelclaw/mcp@${latest}${C.reset} to update          ${C.yellow}â•'${C.reset}\n` +
       `  ${C.yellow}â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•${C.reset}\n\n`
     );
   } catch {

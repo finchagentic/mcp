@@ -377,7 +377,7 @@ export async function handleInsightTool(name: string, args: unknown): Promise<To
       // Price-shaped question with no live enrichment - force an honest answer
       // instead of letting the model recall a training-time number.
       const looksLikePriceQuestion = /\b(price|worth|trading at|cost|value|at \$|how much is|how many \$)\b/i.test(question)
-        && /\b(btc|eth|sol|usdc|usdt|dai|matic|avax|link|uni|aave|ldo|bitcoin|ethereum|solana)\b/i.test(question);
+        && /\b(btc|eth|sol|usdc|usdt|dai|matic|avax|link|uni|aave|ldo|bitcoin|ethereum|solana|base)\b/i.test(question);
       if (looksLikePriceQuestion) {
         systemPrompt += `\n\nCRITICAL: User is asking about a current price but no live data was retrieved. Reply honestly: "I don't have a live price quote right now - check CoinGecko or DexScreener directly." DO NOT state any specific price number. DO NOT recall a price from training data.`;
       }

@@ -78,7 +78,7 @@ export const ALL_TOOLS = [
   // deep_research (depth=standard|deep). Handler fully removed v3.21.
   ...FRAMEWORK_TOOLS,    // 3 - list_playbooks, run_playbook, get_noel_ledger
   ...VAULT_TOOLS,        // 14 - save, read, list, search, history, diff, export, pin, tag, delete, link, related, store_credential, get_credential
-  ...WALLET_TOOLS,       // 1 - get_wallet_address (set_telegram removed v3.18 - broken UX, link is web-app only)
+  ...WALLET_TOOLS,       // 3 - get_wallet_address, get_wallet_balance, wallet_sign_message
   ...MIROSHARK_TOOLS,    // 3 - simulate, status, stop
   ...HUMANIZER_TOOLS,    // 2 - humanize_text, write_content (thread+post merged)
   ...AGENT_TOOLS,        // 12 - list_agents, hire_agent, agent_spawn, agent_recall, agent_update, agent_identity, agent_ledger + agent_schedule, agent_unschedule, agent_pause, agent_resume, agent_runs (v3.18 autonomous)
@@ -87,16 +87,16 @@ export const ALL_TOOLS = [
   ...BASE_TOOLS,         // 4 - query_vaults, list_markets, prepare_deposit, chain_stats
   ...BASE_MCP_TOOLS,     // 7 - base_mcp_{status,balance,send,swap,estimate,lend,resolve} (analyze removed v3.17.5 - dead backend route)
   ...MEMORY_TOOLS,       // 10 - memory_add, memory_search, memory_context, memory_profile, memory_list, memory_delete, memory_insight, memory_extract, memory_consolidate, memory_publish
-  ...OS_TOOLS,           // 1 - noel_status
+  ...OS_TOOLS,           // 3 - noel_status, noel_diagnostics, noel_shell_chat
   ...RESEARCH_TOOLS,       // 2 - web_scrape, web_search
   ...DEEP_RESEARCH_TOOLS,    // 1 - deep_research (plan → search → scrape → synthesize → cite)
   ...RESEARCH_COMPARE_TOOLS, // 1 - research_compare (diff two reports across time)
   ...RESEARCH_CHAIN_TOOLS,   // 1 - research_chain (walk continueFrom evolution timeline)
   ...MONITOR_TOOLS,        // 4 - schedule_research, create_monitor (alias), list_monitors, cancel_monitor
   ...GITHUB_TOOLS,       // 8 - list_repos, list_prs, get_pr, list_issues, get_issue, get_file, get_commits, search_code
-  ...CHRONICLE_TOOLS,    // 2 - chronicle_add, chronicle_list
+  ...CHRONICLE_TOOLS,    // 4 - chronicle_add, chronicle_list, chronicle_search, chronicle_stats
   ...PACKET_TOOLS,       // 4 - packet_create, packet_run, packet_list, packet_share
-  // total: 103 (v3.30.0: +noel_shell_chat; v3.18: set_telegram -1, autonomous agent_* +5; v3.19: SWARM_TOOLS -5 → folded into deep_research)
+  // total: 108 (v3.32.0: +execute_swap in noelShell; v3.31.0: +get_wallet_balance, +wallet_sign_message, +chronicle_search, +chronicle_stats, +noel_diagnostics; v3.30.0: +noel_shell_chat)
 ];
 
 // Build O(1) dispatch map at startup - avoids sequential chained awaits per call

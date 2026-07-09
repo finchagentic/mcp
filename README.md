@@ -1,7 +1,7 @@
 <div align="center">
 
 <!-- Hero Banner SVG (self-contained, no external image) -->
-<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDEyMDAgMzAwIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjojMGEwYTBhO3N0b3Atb3BhY2l0eToxIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3R5bGU9InN0b3AtY29sb3I6IzFhMWEyNTtzdG9wLW9wYWNpdHk6MSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxyYWRpYWxHcmFkaWVudCBpZD0iZ2xvdyIgY3g9IjUwJSIgY3k9IjUwJSIgcj0iNTAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjojMjU2M0VCc3RvcC1vcGFjaXR5OjAuMyIvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0eWxlPSJzdG9wLWNvbG9yOiMyNTYzRUI7c3RvcC1vcGFjaXR5OjAiLz4KICAgIDwvcmFkaWFsR3JhZGllbnQ+CiAgPC9kZWZzPgogIDxyZWN0IHdpZHRoPSIxMjAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCNiZykiLz4KICA8Y2lyY2xlIGN4PSI2MDAiIGN5PSIxNTAiIHI9IjIwMCIgZmlsbD0idXJsKCNnbG93KSIvPgogIDx0ZXh0IHg9IjYwMCIgeT0iMTIwIiBmb250LWZhbWlseT0ic3lzdGVtLXVpLCBzYW5zLXNlcmlmIiBmb250LXNpemU9IjU2IiBmb250LXdlaWdodD0iODAwIiBmaWxsPSIjZjBmNmZjIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBsZXR0ZXItc3BhY2luZz0iLTAuMDNlbSI+Tm9lbENsYXc8L3RleHQ+CiAgPHRleHQgeD0iNjAwIiB5PSIxNjUiIGZvbnQtZmFtaWx5PSJzeXN0ZW0tdWksIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtd2VpZ2h0PSI0MDAiIGZpbGw9IiM5M2M1ZmQiIHRleHQtYW5jaG9yPSJtaWRkbGUiPlRoZSBydW50aW1lIGxheWVyIGZvciBBZ2VudGljIEFJPC90ZXh0PgogIDx0ZXh0IHg9IjYwMCIgeT0iMTk1IiBmb250LWZhbWlseT0ic3lzdGVtLXVpLCBzYW5zLXNlcmlmIiBmb250LXNpemU9IjE0IiBmb250LXdlaWdodD0iNDAwIiBmaWxsPSIjNjQ3NDhiIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj4xMDMgdG9vbHMg4oCUIHBlcnNpc3RlbnQgbWVtb3J5IOKAlCBhZ2VudHMg4oCUIHdvcmtmbG93cyDgpYUgRGVGaSBvbiBCYXNlPC90ZXh0Pgo8L3N2Zz4=" alt="NoelClaw" width="100%">
+<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDEyMDAgMzAwIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjojMGEwYTBhO3N0b3Atb3BhY2l0eToxIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3R5bGU9InN0b3AtY29sb3I6IzFhMWEyNTtzdG9wLW9wYWNpdHk6MSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxyYWRpYWxHcmFkaWVudCBpZD0iZ2xvdyIgY3g9IjUwJSIgY3k9IjUwJSIgcj0iNTAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjojMjU2M0VCO3N0b3Atb3BhY2l0eTowLjMiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdHlsZT0ic3RvcC1jb2xvcjojMjU2M0VCO3N0b3Atb3BhY2l0eTowIi8+CiAgICA8L3JhZGlhbEdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iMTIwMCIgaGVpZ2h0PSIzMDAiIGZpbGw9InVybCgjYmcpIi8+CiAgPGNpcmNsZSBjeD0iNjAwIiBjeT0iMTUwIiByPSIyMDAiIGZpbGw9InVybCgjZ2xvdykiLz4KICA8dGV4dCB4PSI2MDAiIHk9IjEyMCIgZm9udC1mYW1pbHk9InN5c3RlbS11aSwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSI1NiIgZm9udC13ZWlnaHQ9IjgwMCIgZmlsbD0iI2YwZjZmYyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgbGV0dGVyLXNwYWNpbmc9Ii0wLjAzZW0iPk5vZWxDbGF3PC90ZXh0PgogIDx0ZXh0IHg9IjYwMCIgeT0iMTY1IiBmb250LWZhbWlseT0ic3lzdGVtLXVpLCBzYW5zLXNlcmlmIiBmb250LXNpemU9IjIwIiBmb250LXdlaWdodD0iNDAwIiBmaWxsPSIjOTNjNWZkIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5UaGUgcnVudGltZSBsYXllciBmb3IgQWdlbnRpYyBBSTwvdGV4dD4KICA8dGV4dCB4PSI2MDAiIHk9IjE5NSIgZm9udC1mYW1pbHk9InN5c3RlbS11aSwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9IjQwMCIgZmlsbD0iIzY0NzQ4YiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+MTA4IHRvb2xzIOKAlCBwZXJzaXN0ZW50IG1lbW9yeSDigJQgYWdlbnRzIOKAlCB3b3JrZmxvd3Mg4oCUIERlRmkgb24gQmFzZTwvdGV4dD4KPC9zdmc+" alt="NoelClaw" width="100%">
 
 <!-- Badges -->
 [![npm version](https://img.shields.io/npm/v/@noelclaw/mcp.svg?style=for-the-badge&color=CB3837&labelColor=0D1117)](https://www.npmjs.com/package/@noelclaw/mcp)
@@ -47,7 +47,8 @@
 
 | Feature | Description |
 |---------|-------------|
-| 🧩 **Noel Shell** | Tool calling from chat — spawn agents, save to vault, search memory, estimate swaps, create automations. All from a single prompt. |
+| 🧩 **Noel Shell** | Tool calling from chat — spawn agents, save to vault, search memory, estimate + execute swaps, create automations. All from a single prompt. |
+| ⚡ **`execute_swap`** | Execute token swaps on Base mainnet from Noel Shell. Enforces estimate → preview → confirm → execute flow. Routes via 0x Permit2. |
 | 🤖 **7 Agents** | Noel (AI OS), CoinGecko (market data), Sage (research), Forge (code), Quill (creative), Spectre (trading), Atlas (general) |
 | 💬 **Multi-Provider Chat** | Bankr → OpenAI → Anthropic → Groq → OpenRouter → Local fallback |
 | 🎫 **ConnectMcpModal** | Onboarding flow: auto-generate API key + copy install command from webapp |
@@ -115,13 +116,13 @@ set up a daily monitor for
 
 ### One-command auto-install (any MCP client)
 ```bash
-npx -y @noelclaw/mcp@3.30.1 install
+npx -y @noelclaw/mcp@3.32.4 install
 ```
 > Detects Claude Code, Cursor, Windsurf, VS Code, Zed, and configures each automatically.
 
 ### Claude Code
 ```bash
-claude mcp add noelclaw -s user -- npx -y @noelclaw/mcp@3.30.1
+claude mcp add noelclaw -s user -- npx -y @noelclaw/mcp@3.32.4
 ```
 
 ### Cursor / Windsurf / Zed
@@ -130,7 +131,7 @@ claude mcp add noelclaw -s user -- npx -y @noelclaw/mcp@3.30.1
   "mcpServers": {
     "noelclaw": {
       "command": "npx",
-      "args": ["-y", "@noelclaw/mcp@3.30.1"]
+      "args": ["-y", "@noelclaw/mcp@3.32.4"]
     }
   }
 }
@@ -152,7 +153,7 @@ claude mcp add noelclaw -s user -- npx -y @noelclaw/mcp@3.30.1
 
 > No API key required to start. Tools load on first use.
 
-> 🔒 **Always pin the version** (`@3.30.1`, never `@latest`) — this MCP has wallet, credential, and backend persistence capabilities. See [Security Boundaries](#-security-boundaries).
+> 🔒 **Always pin the version** (`@3.32.4`, never `@latest`) — this MCP has wallet, credential, and backend persistence capabilities. See [Security Boundaries](#-security-boundaries).
 
 ---
 
@@ -167,8 +168,9 @@ claude mcp add noelclaw -s user -- npx -y @noelclaw/mcp@3.30.1
 
 > swap 50 USDC to ETH
   → [estimate_swap] Quote: 0.027 ETH · slippage 0.5% · gas ~$0.03
-  → Confirm? [y/n]
-  → ✅ Swap executed · tx 0xabc...
+  → Confirm swap? (yes/no)
+  → [execute_swap confirmed=true]
+  → ✅ Swap executed · tx 0xabc... · view on Basescan
 
 > spawn an agent to track Base DeFi weekly
   → 🤖 Agent 'base-tracker' created · runs every Monday 09:00 UTC
@@ -176,14 +178,14 @@ claude mcp add noelclaw -s user -- npx -y @noelclaw/mcp@3.30.1
 
 ---
 
-## 📊 103 Tools Across the Runtime
+## 📊 108 Tools Across the Runtime
 
 | Pillar | Categories | Count |
 |--------|-----------|:-----:|
-| 🧠 Memory | Memory · Vault · Chronicle | 26 |
+| 🧠 Memory | Memory · Vault · Chronicle | 28 |
 | 🤖 Agents | Agents · Hire | 12 |
-| ⚙️ Workflows | Automation · Monitors · Packets · Deep Research · Research Compare/Chain | 18 |
-| ⚡ Execution | DeFi · Base · Market · Scanner · Web · Coder · GitHub · Humanizer | 47 |
+| ⚙️ Workflows | Automation · Monitors · Packets · Deep Research · Research Compare/Chain · OS | 19 |
+| ⚡ Execution | DeFi · Base · Market · Scanner · Web · Coder · GitHub · Humanizer · Wallet | 49 |
 
 > Run `noelclaw doctor` for a 5-second health check showing exactly what's wired and what isn't.
 
@@ -219,7 +221,7 @@ Works without any API keys. Add keys to unlock more:
 |:---:|----------|------|
 | 1 | **Prompt-Injection** | External content (web, GitHub, vault, memory) is DATA ONLY. Cannot set tool params, request credentials, or drive wallet actions. |
 | 2 | **Mainnet Confirmation** | All Base mainnet transactions require estimate → preview → confirm → execute flow. |
-| 3 | **Pinned Install** | Always use `@3.30.1` (pinned), never `@latest`. Supply-chain trust model documented. |
+| 3 | **Pinned Install** | Always use `@3.32.4` (pinned), never `@latest`. Supply-chain trust model documented. |
 | 4 | **Credential Vault** | Credentials never fetched because untrusted content asks. Never copied into prompts, outputs, or third-party tools. |
 | 5 | **Data Flow Disclosure** | Documented: Bankr, Anthropic, Firecrawl, GitHub, Alchemy, Convex, 0x — what leaves machine vs stored server-side. |
 | 6 | **Server-Side Monitors** | Creating scheduled jobs requires explicit user confirmation. Jobs continue after MCP process exits. |

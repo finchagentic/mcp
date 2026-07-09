@@ -337,7 +337,7 @@ async function checkForUpdate(): Promise<void> {
     const sep = `  ${"─".repeat(58)}`;
     console.log(`\n${sep}`);
     console.log(`  ${C.yellow}⚠${C.reset}  Update available: ${C.yellow}v${PKG_VERSION}${C.reset} → ${C.cyan}v${latest}${C.reset}`);
-    console.log(`     ${C.dim}npx @noelclaw/mcp@latest${C.reset}  ${C.dim}or restart your MCP client${C.reset}`);
+    console.log(`     ${C.dim}npm install -g @noelclaw/mcp@${latest}${C.reset}  ${C.dim}or restart your MCP client${C.reset}`);
     console.log(`${sep}\n`);
   } catch {
     // silently ignore

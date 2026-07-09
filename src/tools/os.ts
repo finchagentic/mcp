@@ -16,6 +16,14 @@ export const OS_TOOLS: Tool[] = [
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
+    name: "noel_diagnostics",
+    description:
+      "Health check for all Noelclaw services - Convex backend, Firecrawl, Supermemory, and configured API keys. " +
+      "Run this when something is broken or before starting a long research session to confirm everything is live. " +
+      "Shows which env vars are set and which services are reachable.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
+  {
     name: "noel_shell_chat",
     description:
       "Chat with Noel Shell — AI terminal with tool calling. Can spawn agents, save to vault, search memory, create automations, estimate swaps, list agents, and get wallet balance — all from a single prompt.",
@@ -109,18 +117,82 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
 
+    case "noel_diagnostics": {
+      const CONVEX_URL = process.env.NOELCLAW_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
+      // Ping root of each service — any non-5xx means the host is up
+      const FC_URL = "https://api.firecrawl.dev";
+      const SM_URL = "https://api.supermemory.ai";
+
+      const ping = async (url: string, timeoutMs = 5000): Promise<"ok" | "error" | "unconfigured"> => {
+        try {
+          const res = await fetch(url, {
+            method: "GET",
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          // 4xx = reachable but needs auth or wrong path — still means service is up
+          return (res.status < 500) ? "ok" : "error";
+        } catch {
+          return "error";
+        }
+      };
+
+      const envKeys = {
+        "BANKR_API_KEY":          !!process.env.BANKR_API_KEY,
+        "ANTHROPIC_API_KEY":      !!process.env.ANTHROPIC_API_KEY,
+        "GROK_API_KEY":           !!process.env.GROK_API_KEY,
+        "FIRECRAWL_API_KEY":      !!process.env.FIRECRAWL_API_KEY,
+        "NOELCLAW_SESSION_TOKEN": !!process.env.NOELCLAW_SESSION_TOKEN,
+        "NOELCLAW_API_KEY":       !!process.env.NOELCLAW_API_KEY,
+        "TELEGRAM_BOT_TOKEN":     !!process.env.TELEGRAM_BOT_TOKEN,
+      };
+
+      const [convexStatus, fcStatus, smStatus] = await Promise.all([
+        // Ping the public platform stats route — runs a real DB query, so a 200
+        // confirms Convex is actually serving, not just that the HTTP router is up.
+        ping(`${CONVEX_URL}/stats/platform`),
+        process.env.FIRECRAWL_API_KEY ? ping(FC_URL) : Promise.resolve("unconfigured" as const),
+        ping(SM_URL),
+      ]);
+
+      const statusIcon = (s: "ok" | "error" | "unconfigured") =>
+        s === "ok" ? "✅" : s === "unconfigured" ? "⚪" : "❌";
+
+      const llmConfigured = envKeys["BANKR_API_KEY"] || envKeys["ANTHROPIC_API_KEY"] || envKeys["GROK_API_KEY"];
+
+      const hints: string[] = [];
+      if (!llmConfigured) hints.push(`→ No LLM key set — deep_research, ask_noel, market_thesis, and agent tools won't work.`);
+      if (!envKeys["FIRECRAWL_API_KEY"]) hints.push(`→ No FIRECRAWL_API_KEY — deep_research falls back to Noelclaw proxy (requires session token).`);
+
+      const lines = [
+        `## 🩺 Noelclaw Diagnostics`,
+        ``,
+        `**Services:**`,
+        `  ${statusIcon(convexStatus)}  Convex backend       ${convexStatus === "ok" ? "reachable" : "unreachable — check NOELCLAW_CONVEX_URL"}`,
+        `  ${statusIcon(fcStatus)}  Firecrawl            ${fcStatus === "ok" ? "reachable" : fcStatus === "unconfigured" ? "no FIRECRAWL_API_KEY — deep_research will use proxy" : "unreachable"}`,
+        `  ${statusIcon(smStatus)}  Supermemory          ${smStatus === "ok" ? "reachable" : "unreachable — memory tools may fail"}`,
+        ``,
+        `**API Keys configured:**`,
+        ...Object.entries(envKeys).map(([k, v]) => `  ${v ? "✅" : "⚪"}  ${k}`),
+        ``,
+        `**LLM:** ${llmConfigured ? "✅ configured" : "⚠️  no LLM key — set BANKR_API_KEY, ANTHROPIC_API_KEY, or GROK_API_KEY"}`,
+        ...(hints.length ? [``, ...hints] : []),
+      ];
+
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    }
+
     case "noel_shell_chat": {
       const { message, agent_id } = args as { message: string; agent_id?: string };
       if (!message) return { content: [{ type: "text", text: "Error: message is required" }] };
-      // Route to Convex noelShellChat action
       try {
-        const res = await fetch(`${CONVEX_SITE}/api/noelShell`, {
+        const res = await fetch(`${CONVEX_SITE}/noel/shell/chat`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.NOELCLAW_SESSION_TOKEN ?? ""}`,
+            "Authorization": `Bearer ${process.env.NOELCLAW_SESSION_TOKEN ?? process.env.NOELCLAW_API_KEY ?? ""}`,
           },
           body: JSON.stringify({ message, agentId: agent_id ?? "noel-default" }),
+          signal: AbortSignal.timeout(60_000),
         });
         if (!res.ok) {
           return { content: [{ type: "text", text: `Shell chat error: ${res.status} ${res.statusText}` }] };

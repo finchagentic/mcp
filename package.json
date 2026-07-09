@@ -1,7 +1,7 @@
 {
   "name": "@noelclaw/mcp",
-  "version": "3.31.0",
-  "description": "The runtime layer for Agentic AI. 103 MCP tools: persistent memory, autonomous agents, vault storage, scheduled workflows, DeFi execution on Base, deep research, and Noel Shell tool calling — works in Claude Code, Cursor, Windsurf, Codex, Aeon, Antigravity, and any MCP-compatible client.",
+  "version": "3.32.4",
+  "description": "The runtime layer for Agentic AI. 108 MCP tools: persistent memory, autonomous agents, vault storage, scheduled workflows, DeFi execution on Base, deep research, and Noel Shell tool calling (estimate + execute swaps) — works in Claude Code, Cursor, Windsurf, Codex, Aeon, Antigravity, and any MCP-compatible client.",
   "main": "dist/index.js",
   "bin": {
     "noelclaw": "dist/cli.js",
@@ -13,7 +13,7 @@
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
     "prepare": "husky",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build && node scripts/version-readme.js"
   },
   "lint-staged": {
     "*.{ts,tsx}": "eslint --fix"
@@ -64,11 +64,14 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "@types/node": "^20.0.0",
+    "eslint": "^9.39.1",
     "husky": "^9.1.7",
     "lint-staged": "^15.2.10",
     "ts-node": "^10.9.2",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.63.0"
   },
   "engines": {
     "node": ">=18"

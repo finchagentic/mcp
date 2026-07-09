@@ -56,6 +56,46 @@ export const CHRONICLE_TOOLS: Tool[] = [
       },
     },
   },
+  {
+    name: "chronicle_search",
+    description:
+      "Search the Noel Chronicle by keyword. Matches against event titles and details. " +
+      "Useful for finding when something specific happened: 'when did I last research ETH?' or 'find all vault saves for Base'.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Keyword or phrase to search for in event titles and details",
+        },
+        type: {
+          type: "string",
+          enum: [...CHRONICLE_TYPES],
+          description: "Optional: filter by event type before searching",
+        },
+        limit: {
+          type: "number",
+          description: "Max results to return (default 10, max 50)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "chronicle_stats",
+    description:
+      "Activity stats for your AI runtime - breakdown by event type, daily activity heatmap, " +
+      "busiest days, and most active categories. Use to understand how heavily you're using the runtime.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        days: {
+          type: "number",
+          description: "How many days back to analyze (default 30, max 90)",
+        },
+      },
+    },
+  },
 ];
 
 // Keep "swarm" emoji for backward compatibility - legacy chronicle entries
@@ -71,6 +111,17 @@ const TYPE_EMOJI: Record<string, string> = {
   custom:      "📌",
   swarm:       "🐝",
 };
+
+function formatEntry(e: any): string {
+  const emoji = TYPE_EMOJI[e.type] ?? "📌";
+  const date = new Date(e.ts).toLocaleString("en-US", {
+    month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+  const lines = [`${emoji} **${e.title}** · \`${e.type}\` · ${date}`];
+  if (e.detail) lines.push(`   ${e.detail}`);
+  return lines.join("\n");
+}
 
 export async function handleChronicle(
   name: string,
@@ -133,15 +184,99 @@ export async function handleChronicle(
       "",
     ];
 
-    for (const e of entries) {
-      const emoji = TYPE_EMOJI[e.type] ?? "📌";
-      const date = new Date(e.ts).toLocaleString("en-US", {
-        month: "short", day: "numeric",
-        hour: "2-digit", minute: "2-digit",
-      });
-      lines.push(`${emoji} **${e.title}** · \`${e.type}\` · ${date}`);
-      if (e.detail) lines.push(`   ${e.detail}`);
+    for (const e of entries) lines.push(formatEntry(e));
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+
+  if (name === "chronicle_search") {
+    const { query, type, limit = 10 } = args as { query: string; type?: string; limit?: number };
+    if (!query) return { content: [{ type: "text", text: "query is required" }], isError: true };
+
+    const data = await callConvex(
+      `/chronicle/list?limit=100${type ? `&type=${type}` : ""}`,
+      "GET",
+      undefined,
+      "chronicle_list",
+    );
+
+    const allEntries: any[] = data.entries ?? [];
+    const q = query.toLowerCase();
+    const matched = allEntries.filter((e: any) =>
+      (e.title ?? "").toLowerCase().includes(q) ||
+      (e.detail ?? "").toLowerCase().includes(q)
+    ).slice(0, Math.min(Number(limit), 50));
+
+    if (matched.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: `No chronicle events matching "${query}"${type ? ` (type: ${type})` : ""}. (searched most recent 100 entries)`,
+        }],
+      };
     }
+
+    const lines = [
+      `## 🔍 Chronicle Search: "${query}"`,
+      `*${matched.length} match${matched.length !== 1 ? "es" : ""}${type ? ` · type: ${type}` : ""} · searched most recent 100 entries*`,
+      "",
+    ];
+    for (const e of matched) lines.push(formatEntry(e));
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+
+  if (name === "chronicle_stats") {
+    const days = Math.min(Number(args.days ?? 30), 90);
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+
+    const data = await callConvex(
+      `/chronicle/list?limit=100`,
+      "GET",
+      undefined,
+      "chronicle_list",
+    );
+
+    const allEntries: any[] = (data.entries ?? []).filter((e: any) => (e.ts ?? 0) >= cutoff);
+
+    if (allEntries.length === 0) {
+      return {
+        content: [{ type: "text", text: `No chronicle events in the past ${days} days.` }],
+      };
+    }
+
+    // Count by type
+    const byType: Record<string, number> = {};
+    const byDay: Record<string, number> = {};
+
+    for (const e of allEntries) {
+      byType[e.type] = (byType[e.type] ?? 0) + 1;
+      const day = new Date(e.ts).toISOString().slice(0, 10);
+      byDay[day] = (byDay[day] ?? 0) + 1;
+    }
+
+    const sortedTypes = Object.entries(byType).sort((a, b) => b[1] - a[1]);
+    const sortedDays  = Object.entries(byDay).sort((a, b) => b[1] - a[1]);
+    const activeDays  = Object.keys(byDay).length;
+    const avgPerDay   = (allEntries.length / days).toFixed(1);
+
+    const lines = [
+      `## 📊 Chronicle Stats — last ${days} days`,
+      ``,
+      `**Total events:** ${allEntries.length} across ${activeDays} active day${activeDays !== 1 ? "s" : ""} (avg ${avgPerDay}/day)`,
+      ``,
+      `**By type:**`,
+      ...sortedTypes.map(([t, n]) => {
+        const bar = "█".repeat(Math.round((n / allEntries.length) * 20));
+        const emoji = TYPE_EMOJI[t] ?? "📌";
+        return `  ${emoji} ${t.padEnd(12)} ${String(n).padStart(3)}  ${bar}`;
+      }),
+      ``,
+      `**Busiest days:**`,
+      ...sortedDays.slice(0, 5).map(([d, n]) => `  ${d}  ${n} event${n !== 1 ? "s" : ""}`),
+      ``,
+      `*Note: stats based on most recent 100 entries*`,
+    ];
 
     return { content: [{ type: "text", text: lines.join("\n") }] };
   }

@@ -26,7 +26,7 @@ export type EnrichmentBlock = {
 
 // ─── Topic detection ──────────────────────────────────────────────────────────
 
-const CRYPTO_RE = /\b(tvl|apy|yield|vault|defi|stablecoin|usdc|usdt|eth|btc|sol|bitcoin|ethereum|solana|aerodrome|uniswap|morpho|moonwell|aave|lido|ethena|pendle|curve|gauntlet|steakhouse|base chain|arbitrum|optimism|polygon|onchain|on-chain|wallet|swap|amm|perpetual|perp|liquid staking)\b/i;
+const CRYPTO_RE = /\b(tvl|apy|yield|vault|defi|stablecoin|usdc|usdt|eth|btc|sol|bitcoin|ethereum|solana|base|aerodrome|uniswap|morpho|moonwell|aave|lido|ethena|pendle|curve|gauntlet|steakhouse|base chain|arbitrum|optimism|polygon|onchain|on-chain|wallet|swap|amm|perpetual|perp|liquid staking)\b/i;
 
 const TECH_RE = /\b(ai|llm|gpt|claude|anthropic|openai|gemini|machine learning|deep learning|neural|transformer|frontier model|agent|mcp|api|framework|library|sdk|github|repo|repository|startup|y combinator|yc|saas|vc|funding round|seed|series [a-d]|launches|launched|release|shipped|build|launch)\b/i;
 
