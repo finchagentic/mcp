@@ -4,6 +4,7 @@ import { readConfig } from "./config.js";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const BANKR_URL = "https://llm.bankr.bot/v1/chat/completions";
 const GROK_URL = "https://api.x.ai/v1/chat/completions";
+const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 const CONVEX_SITE = process.env.NOELCLAW_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
@@ -40,12 +41,22 @@ export interface LLMOptions {
  * Useful for tools that want to conditionally enable Grok-specific features
  * like Live Search.
  */
+/**
+ * True if any BYOK provider key (Bankr/Anthropic/OpenAI/Grok) is set. Callers
+ * that must never fall through to callViaConvex() - e.g. local-memory mode,
+ * which promises zero Convex involvement - should check this first and fail
+ * clearly instead of letting callLLM() silently proxy through Noelclaw.
+ */
+export function hasDirectLLMKey(): boolean {
+  return !!(process.env.BANKR_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GROK_API_KEY);
+}
+
 export function isGrokActive(): boolean {
   const provider = process.env.NOELCLAW_PROVIDER?.toLowerCase().trim();
   if (provider === "grok") return !!process.env.GROK_API_KEY;
-  if (provider === "bankr" || provider === "anthropic") return false;
+  if (provider === "bankr" || provider === "anthropic" || provider === "openai") return false;
   // Auto-priority - Grok is only active if it's the only key present
-  if (process.env.BANKR_API_KEY || process.env.ANTHROPIC_API_KEY) return false;
+  if (process.env.BANKR_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY) return false;
   return !!process.env.GROK_API_KEY;
 }
 
@@ -53,9 +64,9 @@ export function isGrokActive(): boolean {
  * Call the best available LLM.
  *
  * Provider auto-priority (when NOELCLAW_PROVIDER unset):
- *   BANKR_API_KEY → ANTHROPIC_API_KEY → GROK_API_KEY → Convex backend
+ *   BANKR_API_KEY → ANTHROPIC_API_KEY → OPENAI_API_KEY → GROK_API_KEY → Convex backend
  *
- * Force a provider via NOELCLAW_PROVIDER: "bankr" | "anthropic" | "grok"
+ * Force a provider via NOELCLAW_PROVIDER: "bankr" | "anthropic" | "openai" | "grok"
  *
  * Model selection (first wins):
  *   NOELCLAW_MODEL → {provider}_MODEL → provider default
@@ -71,16 +82,19 @@ export async function callLLM(
   const provider     = process.env.NOELCLAW_PROVIDER?.toLowerCase().trim();
   const bankrKey     = process.env.BANKR_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const openaiKey    = process.env.OPENAI_API_KEY;
   const grokKey      = process.env.GROK_API_KEY;
 
   // Explicit provider override - user picked one
   if (provider === "grok" && grokKey)           return callGrok(grokKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.liveSearch, options.model);
   if (provider === "anthropic" && anthropicKey) return callAnthropic(anthropicKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.model);
+  if (provider === "openai" && openaiKey)       return callOpenAI(openaiKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.model);
   if (provider === "bankr" && bankrKey)         return callBankr(bankrKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.model);
 
   // Auto priority
   if (bankrKey)     return callBankr(bankrKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.model);
   if (anthropicKey) return callAnthropic(anthropicKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.model);
+  if (openaiKey)    return callOpenAI(openaiKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.model);
   if (grokKey)      return callGrok(grokKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.liveSearch, options.model);
 
   // Fallback: route through Convex backend - owner covers cost
@@ -197,6 +211,50 @@ async function callBankr(
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Bankr error ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+  return data.choices?.[0]?.message?.content ?? "";
+}
+
+// OPENAI_BASE_URL lets this point at any OpenAI Chat Completions-compatible
+// endpoint instead of api.openai.com - self-hosted gateways (LiteLLM, vLLM,
+// Ollama, LocalAI) and aggregators (OpenRouter) all speak this same API
+// shape, so no separate provider code is needed for them.
+function openAiChatUrl(): string {
+  const base = process.env.OPENAI_BASE_URL?.replace(/\/+$/, "");
+  return base ? `${base}/chat/completions` : OPENAI_URL;
+}
+
+async function callOpenAI(
+  apiKey: string,
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens: number,
+  history: ChatMessage[],
+  timeoutMs: number,
+  modelOverride?: string,
+): Promise<string> {
+  const model = modelOverride ?? process.env.NOELCLAW_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+
+  const res = await fetch(openAiChatUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...history,
+        { role: "user", content: userPrompt },
+      ],
+      max_tokens: maxTokens,
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`OpenAI error ${res.status}: ${body.slice(0, 200)}`);
   }
 
   const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };

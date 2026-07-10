@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env node
 import { startServer, ALL_TOOLS } from "./server.js";
 import { getOrCreateWallet } from "./wallet.js";
-import { getSavedToken, writeConfig } from "./config.js";
+import { getSavedToken, writeConfig, hydrateEnvFromConfig } from "./config.js";
 import * as readline from "readline";
 import * as fs from "fs";
 import * as path from "path";
@@ -70,6 +70,7 @@ async function checkForUpdate(current: string): Promise<void> {
 }
 
 async function main() {
+  hydrateEnvFromConfig();
   process.stderr.write(BANNER);
 
   // ── Tool category groups derived from ALL_TOOLS ────────────────────────────
@@ -118,6 +119,8 @@ async function main() {
     ? `Bankr  ${C.dim}${model}${C.reset}`
     : process.env.ANTHROPIC_API_KEY
     ? `Anthropic  ${C.dim}${model}${C.reset}`
+    : process.env.OPENAI_API_KEY
+    ? `OpenAI  ${C.dim}${model}${C.reset}`
     : `Noelclaw  ${C.dim}proxy Â· auto-auth${C.reset}`;
 
   line("version", `v${PKG_VERSION}  ${C.dim}MCP protocol 2.1.0${C.reset}`);

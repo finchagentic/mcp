@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.7] - 2026-07-10
+
+### Added
+
+- Local, self-hosted memory backend (self-hosted [supermemory](https://github.com/supermemoryai/supermemory)) - opt-in via `noelclaw setup`. Memory tools run entirely on your own machine, zero cost, no Noelclaw account or Convex proxy involved once enabled.
+- OpenAI as a fourth BYOK LLM provider (`OPENAI_API_KEY`), alongside Bankr/Anthropic/Grok. Includes `OPENAI_BASE_URL` override for any OpenAI Chat Completions-compatible self-hosted endpoint (LiteLLM, vLLM, Ollama, OpenRouter, your own VPS gateway).
+- `noelclaw setup` - new CLI command: configure a BYOK LLM provider and/or enable local memory in one guided flow.
+
+**Known limitation:** the local memory client (`src/local-memory.ts`) has been code-reviewed and unit-verified (branching logic, config handling, error paths), but has **not yet been live-tested against a running `supermemory-server`** - the official installer requires WSL2 on Windows, and setting up a WSL distro + an LLM key for supermemory's own embedding pipeline wasn't completed this release. In particular the `"*"` wildcard-search assumption in `localMemoryList()` (used by `memory_list`/`memory_profile`/dedup detection) is unverified against the real API. Treat local memory as beta until confirmed against a live server.
+
+### Fixed
+
+- **Critical:** `noelclaw install` wrote a broken MCP server entry into every detected client config - `npx -y @noelclaw/mcp@latest` fails outright with "could not determine executable to run" (the package ships two bins, `noelclaw` and `noelclaw-mcp`, and npx can't resolve which one to run from the package name alone). Every fresh install via the CLI's own auto-configure feature was non-functional. Now writes the unambiguous form (`npx -y -p @noelclaw/mcp@<pinned-version> noelclaw-mcp`), pinned to the installed version instead of `@latest`.
+
 ## [3.32.6] - 2026-07-09
 
 ### Fixed

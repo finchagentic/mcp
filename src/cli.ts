@@ -6,8 +6,12 @@ import * as path from "path";
 import { runAgent } from "./agent-loop.js";
 import { ALL_TOOLS } from "./server.js";
 import { filterTools } from "./tool-filter.js";
-import { writeConfig, readConfig } from "./config.js";
+import { writeConfig, readConfig, hydrateEnvFromConfig } from "./config.js";
 import type { ChatMessage } from "./llm.js";
+import { getLocalMemoryConfig, isLocalMemoryReachable } from "./local-memory.js";
+import * as child_process from "child_process";
+
+hydrateEnvFromConfig();
 
 // Derived tool counts - single source of truth, kept in sync with the
 // actual registered tools. Updates here propagate to banner, login,
@@ -190,6 +194,219 @@ async function loginFlow(loginRl?: readline.Interface): Promise<void> {
   rl.close();
 }
 
+// ── Setup wizard: BYOK LLM provider + local memory ────────────────────────────
+// Deduplicates doubled input from a known Clink terminal bug - same helper
+// used throughout loginFlow/loginWithApiKey above.
+function dedupClinkInput(s: string): string {
+  if (s.length > 0 && s.length % 2 === 0) {
+    const half = s.length / 2;
+    if (s.slice(0, half) === s.slice(half)) return s.slice(0, half);
+  }
+  return s;
+}
+
+const PROVIDER_CHOICES: Record<string, { configKey: "bankrApiKey" | "anthropicApiKey" | "openaiApiKey"; envVar: string; label: string }> = {
+  "1": { configKey: "bankrApiKey",     envVar: "BANKR_API_KEY",     label: "Bankr" },
+  "2": { configKey: "anthropicApiKey", envVar: "ANTHROPIC_API_KEY", label: "Anthropic" },
+  "3": { configKey: "openaiApiKey",    envVar: "OPENAI_API_KEY",    label: "OpenAI" },
+};
+
+const LOCAL_MEMORY_INSTALL_CMD = ["npx", ["-y", "supermemory", "local"]] as const;
+const LOCAL_MEMORY_POLL_MS = 2000;
+const LOCAL_MEMORY_POLL_MAX_MS = 45_000;
+const LOCAL_MEMORY_KEY_RE = /\b(sm_[A-Za-z0-9_-]{8,})\b/;
+
+async function setupFlow(): Promise<void> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q: string) => new Promise<string>(resolve => rl.question(q, resolve));
+
+  console.log(`\n  ${C.cyan}${C.bold}noelclaw setup${C.reset}`);
+  console.log(`  ${C.dim}Bring your own LLM key and/or run memory fully local - zero cost, zero lock-in.${C.reset}\n`);
+
+  // ── Step 1: LLM provider ──────────────────────────────────────────────────
+  console.log(`  ${C.dim}[1] Bankr   [2] Anthropic   [3] OpenAI   [4] Custom endpoint (self-hosted/VPS)   [5] Skip${C.reset}\n`);
+  const providerChoice = dedupClinkInput((await ask(`  Choose [1-5]: `)).trim());
+  const provider = PROVIDER_CHOICES[providerChoice];
+
+  // Tracks whatever key got configured in this step, regardless of which
+  // branch set it, so step 2 can forward it to the local-memory subprocess
+  // env uniformly instead of only handling the named-provider case.
+  let chosenProviderKey: string | undefined;
+  let chosenProviderEnvVar: string | undefined;
+  if (provider) {
+    const key = dedupClinkInput((await ask(`  ${provider.label} API key: `)).trim()).replace(/[^\x20-\x7E]/g, "").trim();
+    if (key) {
+      writeConfig({ [provider.configKey]: key } as any);
+      process.env[provider.envVar] = key;
+      chosenProviderKey = key;
+      chosenProviderEnvVar = provider.envVar;
+      console.log(`\n  ${C.green}✓${C.reset} Saved. ${provider.label} will be used for LLM calls in the interactive shell and MCP server.`);
+      console.log(`  ${C.dim}(Stored in ~/.noelclaw/config.json, mode 0600 - same protection as your session token.)${C.reset}\n`);
+    } else {
+      console.log(`\n  ${C.dim}No key entered - skipped.${C.reset}\n`);
+    }
+  } else if (providerChoice === "4") {
+    console.log(`  ${C.dim}Any OpenAI Chat Completions-compatible endpoint works (LiteLLM, vLLM, Ollama, OpenRouter, your own VPS gateway).${C.reset}`);
+    const baseUrl = dedupClinkInput((await ask(`  Base URL (e.g. https://your-vps:8000/v1): `)).trim()).replace(/[^\x20-\x7E]/g, "").trim().replace(/\/+$/, "");
+    if (baseUrl) {
+      const key = dedupClinkInput((await ask(`  API key (leave blank if your endpoint doesn't need one): `)).trim()).replace(/[^\x20-\x7E]/g, "").trim();
+      writeConfig({ openaiBaseUrl: baseUrl, openaiApiKey: key || "local" });
+      process.env.OPENAI_BASE_URL = baseUrl;
+      process.env.OPENAI_API_KEY = key || "local";
+      chosenProviderKey = key || "local";
+      chosenProviderEnvVar = "OPENAI_API_KEY";
+      console.log(`\n  ${C.green}✓${C.reset} Saved. Requests route to ${baseUrl} using the OpenAI protocol.\n`);
+    } else {
+      console.log(`\n  ${C.dim}No URL entered - skipped.${C.reset}\n`);
+    }
+  } else {
+    console.log(`\n  ${C.dim}Skipped - using Noelclaw proxy.${C.reset}\n`);
+  }
+
+  // ── Step 2: local memory ──────────────────────────────────────────────────
+  console.log(`  ${C.cyan}${C.bold}Local memory${C.reset}  ${C.dim}(self-hosted supermemory - github.com/supermemoryai/supermemory)${C.reset}`);
+  console.log(`  ${C.dim}Runs on your machine, MIT licensed, free. Replaces the Noelclaw-hosted memory proxy.${C.reset}\n`);
+  const enableLocal = dedupClinkInput((await ask(`  Enable local memory? [y/N]: `)).trim()).toLowerCase();
+
+  if (enableLocal === "y" || enableLocal === "yes") {
+    const url = "http://localhost:6767";
+    console.log(`\n  ${C.dim}Checking ${url}...${C.reset}`);
+
+    let reachable = await isLocalMemoryReachableRaw(url);
+    let installerError: string | undefined;
+    if (!reachable) {
+      console.log(`  ${C.dim}Not running - launching \`npx -y supermemory local\` in the background...${C.reset}`);
+      const providerEnv = chosenProviderEnvVar && chosenProviderKey ? { [chosenProviderEnvVar]: chosenProviderKey } : {};
+      const result = await launchLocalMemoryServer(url, providerEnv);
+      reachable = result.reachable;
+      installerError = result.installerError;
+    }
+
+    if (reachable) {
+      const key = await readLocalMemoryKey();
+      if (key) {
+        writeConfig({ memoryBackend: "local", supermemoryUrl: url, supermemoryApiKey: key });
+        console.log(`\n  ${C.green}✓${C.reset} Local memory enabled at ${url}. Memory tools now run fully local - zero cost, private to this machine.\n`);
+      } else {
+        console.log(`\n  ${C.yellow}⚠${C.reset}  Server is running but its API key couldn't be auto-detected.`);
+        const manualKey = dedupClinkInput((await ask(`  Paste the key printed by the server (starts with sm_), or press Enter to skip: `)).trim());
+        if (manualKey) {
+          writeConfig({ memoryBackend: "local", supermemoryUrl: url, supermemoryApiKey: manualKey });
+          console.log(`\n  ${C.green}✓${C.reset} Local memory enabled at ${url}.\n`);
+        } else {
+          console.log(`\n  ${C.dim}Skipped - memory tools will keep using the Noelclaw proxy. Run \`noelclaw setup\` again once you have the key.${C.reset}\n`);
+        }
+      }
+    } else if (installerError) {
+      console.log(`\n  ${C.yellow}⚠${C.reset}  Local install failed: ${installerError}`);
+      console.log(`  ${C.dim}Memory tools keep using the Noelclaw proxy until this is resolved. Run \`noelclaw setup\` again after fixing it.${C.reset}\n`);
+    } else {
+      console.log(`\n  ${C.yellow}⚠${C.reset}  Couldn't reach a local supermemory server after ${LOCAL_MEMORY_POLL_MAX_MS / 1000}s.`);
+      console.log(`  ${C.dim}Install it yourself in another terminal: ${C.cyan}npx -y supermemory local${C.reset}`);
+      console.log(`  ${C.dim}Then run \`noelclaw setup\` again - memory tools keep using the Noelclaw proxy until then.${C.reset}\n`);
+    }
+  } else {
+    console.log(`\n  ${C.dim}Skipped - memory tools use the Noelclaw-hosted proxy.${C.reset}\n`);
+  }
+
+  rl.close();
+}
+
+async function isLocalMemoryReachableRaw(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(1500) });
+    return res.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+// Spawns the local supermemory server detached so it survives after this CLI
+// process exits (same lifecycle model as a local daemon, e.g. Ollama).
+// Captures stdout briefly to look for a printed sm_... key (the binary's
+// first-boot wizard prints one), then stops watching it - the process itself
+// keeps running in the background regardless of whether we caught the key.
+let capturedLocalMemoryKey: string | undefined;
+
+// Known installer failure signatures worth surfacing verbatim instead of a
+// generic "couldn't reach" message. Confirmed on Windows: the installer
+// shells out via WSL, and fails immediately (before ever listening on the
+// port) if WSL isn't installed/registered - waiting out the full poll
+// window for that case just wastes the user's time.
+const KNOWN_INSTALLER_FAILURES: Array<{ re: RegExp; hint: string }> = [
+  { re: /unsupported OS/i, hint: "The installer doesn't support this shell/OS directly (seen from Git Bash/MINGW on Windows)." },
+  { re: /REGDB_E_CLASSNOTREG|Class not registered/i, hint: "The installer needs WSL (Windows Subsystem for Linux) to run its install script, and WSL isn't set up on this machine. Install it with `wsl --install` (needs a restart), then try again." },
+];
+
+interface LaunchResult { reachable: boolean; installerError?: string }
+
+async function launchLocalMemoryServer(url: string, providerEnv: Record<string, string>): Promise<LaunchResult> {
+  const [cmd, args] = LOCAL_MEMORY_INSTALL_CMD;
+  let installerError: string | undefined;
+  // Authoritative "did the process die" signal - independent of whether the
+  // regex hints below happen to match. A spawn failure (e.g. npx not found)
+  // emits an async 'error' event rather than throwing synchronously, so it
+  // is NOT caught by the try/catch around spawn() itself; without this
+  // listener it becomes an uncaught exception that crashes the whole CLI.
+  let exited = false;
+  // Accumulated across all chunks (not tested per-chunk) so a known error
+  // string split across two writes still matches.
+  let outputBuffer = "";
+
+  try {
+    const child = child_process.spawn(cmd, [...args], {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...providerEnv },
+    });
+    child.on("error", (err) => {
+      exited = true;
+      if (!installerError) installerError = `Couldn't launch \`${cmd}\`: ${err.message}`;
+    });
+    child.on("exit", () => { exited = true; });
+    const onData = (chunk: Buffer) => {
+      outputBuffer += chunk.toString("utf8");
+      const keyMatch = outputBuffer.match(LOCAL_MEMORY_KEY_RE);
+      if (keyMatch) capturedLocalMemoryKey = keyMatch[1];
+      if (!installerError) {
+        const known = KNOWN_INSTALLER_FAILURES.find((k) => k.re.test(outputBuffer));
+        if (known) installerError = known.hint;
+      }
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    child.unref();
+  } catch (err: any) {
+    return { reachable: false, installerError: `Couldn't launch \`${cmd}\`: ${err.message}` };
+  }
+
+  const deadline = Date.now() + LOCAL_MEMORY_POLL_MAX_MS;
+  while (Date.now() < deadline) {
+    if (await isLocalMemoryReachableRaw(url)) return { reachable: true };
+    // Fail fast once the process has died (confirmed via 'error'/'exit') or
+    // a known error signature was recognized - polling further won't help.
+    if (installerError || exited) return { reachable: false, installerError };
+    await new Promise((r) => setTimeout(r, LOCAL_MEMORY_POLL_MS));
+  }
+  return { reachable: false, installerError };
+}
+
+async function readLocalMemoryKey(): Promise<string | undefined> {
+  if (capturedLocalMemoryKey) return capturedLocalMemoryKey;
+  // Fall back to the documented on-disk location ("everything lives in
+  // ./.supermemory") - exact path may need adjusting once verified against
+  // the real binary; this covers the most likely spot.
+  try {
+    const candidate = path.join(os.homedir(), ".supermemory", "config.json");
+    if (fs.existsSync(candidate)) {
+      const data = JSON.parse(fs.readFileSync(candidate, "utf8"));
+      const key = data?.apiKey ?? data?.api_key ?? data?.key;
+      if (typeof key === "string" && LOCAL_MEMORY_KEY_RE.test(key)) return key;
+    }
+  } catch { /* best-effort only */ }
+  return undefined;
+}
+
 // ── ANSI ─────────────────────────────────────────────────────────────────────
 const C = {
   reset:  "\x1b[0m",
@@ -229,6 +446,7 @@ function buildBanner(): string {
   const walletAddr = getLocalWalletAddress();
   const provider = process.env.BANKR_API_KEY ? "Bankr"
     : process.env.ANTHROPIC_API_KEY ? "Anthropic"
+    : process.env.OPENAI_API_KEY ? "OpenAI"
     : "Noelclaw proxy";
 
   const logo = LOGO_LINES.map(l => `${C.cyan}${C.bold}${l}${C.reset}`).join("\n");
@@ -549,9 +767,18 @@ function resolveClients(): McpClient[] {
     });
 }
 
+// `npx -y @noelclaw/mcp@version` alone fails with "could not determine
+// executable to run" - the package ships two bins (noelclaw, noelclaw-mcp)
+// and neither matches the unscoped package name npx resolves by default.
+// -p ... noelclaw-mcp names the actual MCP-protocol server explicitly
+// (not `noelclaw`, which is the human-interactive REPL and would break the
+// JSON-RPC handshake if a host spawned it instead). Pinned to the currently
+// installed version, never @latest - matches the security boundary
+// documented in the README (wallet/credential access needs a stable,
+// reviewable version, not a moving target).
 const NOELCLAW_ENTRY = {
   command: "npx",
-  args: ["-y", "@noelclaw/mcp@latest"],
+  args: ["-y", "-p", `@noelclaw/mcp@${PKG_VERSION}`, "noelclaw-mcp"],
   env: {} as Record<string, string>,
 };
 
@@ -654,6 +881,7 @@ async function doctorFlow(): Promise<void> {
   // 1. LLM provider
   const provider = process.env.BANKR_API_KEY ? "bankr"
     : process.env.ANTHROPIC_API_KEY ? "anthropic"
+    : process.env.OPENAI_API_KEY ? "openai"
     : "noelclaw-proxy";
   checks.push({
     name: "LLM provider",
@@ -813,6 +1041,27 @@ async function doctorFlow(): Promise<void> {
     });
   }
 
+  // 9. Local memory (self-hosted supermemory) - optional, zero-cost alternative
+  // to the Convex-proxied cloud memory backend.
+  const localMemCfg = getLocalMemoryConfig();
+  if (localMemCfg) {
+    const reachable = await isLocalMemoryReachable(localMemCfg);
+    checks.push(reachable ? {
+      name: "Local memory", status: "✓",
+      detail: `supermemory reachable at ${localMemCfg.url} - memory tools run fully local, zero cost`,
+    } : {
+      name: "Local memory", status: "⚠",
+      detail: `memoryBackend is "local" but ${localMemCfg.url} isn't reachable`,
+      fix: `Start the local server (see \`npx supermemory local\`), or run \`noelclaw setup\` again.`,
+    });
+  } else {
+    checks.push({
+      name: "Local memory", status: "⚠",
+      detail: `Not configured - memory tools use the Noelclaw-hosted proxy`,
+      fix: `Run \`noelclaw setup\` to switch to a free, self-hosted local memory backend.`,
+    });
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
   const colorFor = (s: DoctorCheck["status"]) => s === "✓" ? C.green : s === "⚠" ? C.yellow : C.red;
   const widest = Math.max(...checks.map((c) => c.name.length));
@@ -885,6 +1134,11 @@ if (cmd === "install") {
     console.error(`  ${C.red}✗ doctor error: ${err.message}${C.reset}`);
     process.exit(1);
   });
+} else if (cmd === "setup") {
+  setupFlow().catch((err) => {
+    console.error(`  ${C.red}✗ setup error: ${err.message}${C.reset}`);
+    process.exit(1);
+  });
 } else if (cmd === "logout") {
   const cfg = readConfig();
   if (!cfg.sessionToken) {
@@ -898,6 +1152,7 @@ if (cmd === "install") {
   const walletAddr = getLocalWalletAddress();
   const provider = process.env.BANKR_API_KEY ? "Bankr"
     : process.env.ANTHROPIC_API_KEY ? "Anthropic"
+    : process.env.OPENAI_API_KEY ? "OpenAI"
     : "Noelclaw proxy";
   const SEP_S = `  ${"─".repeat(52)}`;
   console.log(`\n${SEP_S}`);
@@ -928,6 +1183,7 @@ if (cmd === "install") {
     noelclaw logout       Sign out and clear saved token
     noelclaw status       Show auth state and version (quick check)
     noelclaw doctor       Run a full health check + suggest fixes
+    noelclaw setup        Configure your own LLM key and/or local memory
     noelclaw help         Show this help
 
   ${C.dim}Claude Code / Cursor / Windsurf / Codex / Aeon / Antigravity / Zed — anywhere MCP runs.${C.reset}

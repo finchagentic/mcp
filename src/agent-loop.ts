@@ -30,9 +30,11 @@ export async function runAgent(
 ): Promise<AgentResult> {
   const bankrKey     = process.env.BANKR_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const openaiKey    = process.env.OPENAI_API_KEY;
 
   if (bankrKey)     return runBankrLoop(bankrKey, userMessage, history, onToolCall);
   if (anthropicKey) return runAnthropicLoop(anthropicKey, userMessage, history, onToolCall);
+  if (openaiKey)    return runOpenAILoop(openaiKey, userMessage, history, onToolCall);
 
   // No direct key - proxy through Noelclaw backend. Wallet auto-creates at ~/.noelclaw/wallet.json
   // on first use and signs requests transparently. No account or config needed.
@@ -200,13 +202,18 @@ function toBankrTool(tool: any) {
   };
 }
 
-async function runBankrLoop(
-  apiKey: string,
+// Shared tool-calling loop for any OpenAI Chat Completions-compatible
+// endpoint (Bankr's LLM gateway and OpenAI itself both speak this format).
+// Only the URL, auth header, and model differ per provider.
+async function runOpenAICompatibleLoop(
+  url: string,
+  authHeaders: Record<string, string>,
+  model: string,
+  providerLabel: string,
   userMessage: string,
   history: ChatMessage[],
   onToolCall: (name: string) => void,
 ): Promise<AgentResult> {
-  const model = process.env.NOELCLAW_MODEL ?? process.env.BANKR_MODEL ?? "claude-haiku-4-5-20251001";
   const tools = ALL_TOOLS.map(toBankrTool);
   const toolCalls: Array<{ name: string }> = [];
 
@@ -217,21 +224,21 @@ async function runBankrLoop(
   ];
 
   for (let turn = 0; turn < 10; turn++) {
-    const res = await fetch("https://llm.bankr.bot/v1/chat/completions", {
+    const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+      headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({ model, messages, tools, max_tokens: 2048 }),
       signal: AbortSignal.timeout(90_000),
     });
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`Bankr ${res.status}: ${body.slice(0, 300)}`);
+      throw new Error(`${providerLabel} ${res.status}: ${body.slice(0, 300)}`);
     }
 
     const data = await res.json() as any;
     const choice = data.choices?.[0]?.message;
-    if (!choice) throw new Error("Empty response from Bankr");
+    if (!choice) throw new Error(`Empty response from ${providerLabel}`);
 
     messages.push(choice);
 
@@ -259,4 +266,47 @@ async function runBankrLoop(
   }
 
   return { text: "Reached max tool iterations.", toolCalls };
+}
+
+async function runBankrLoop(
+  apiKey: string,
+  userMessage: string,
+  history: ChatMessage[],
+  onToolCall: (name: string) => void,
+): Promise<AgentResult> {
+  const model = process.env.NOELCLAW_MODEL ?? process.env.BANKR_MODEL ?? "claude-haiku-4-5-20251001";
+  return runOpenAICompatibleLoop(
+    "https://llm.bankr.bot/v1/chat/completions",
+    { "X-API-Key": apiKey },
+    model,
+    "Bankr",
+    userMessage,
+    history,
+    onToolCall,
+  );
+}
+
+// Same OPENAI_BASE_URL override as llm.ts's callOpenAI - lets tool-calling
+// route to a self-hosted OpenAI-compatible gateway too.
+function openAiChatUrl(): string {
+  const base = process.env.OPENAI_BASE_URL?.replace(/\/+$/, "");
+  return base ? `${base}/chat/completions` : "https://api.openai.com/v1/chat/completions";
+}
+
+async function runOpenAILoop(
+  apiKey: string,
+  userMessage: string,
+  history: ChatMessage[],
+  onToolCall: (name: string) => void,
+): Promise<AgentResult> {
+  const model = process.env.NOELCLAW_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+  return runOpenAICompatibleLoop(
+    openAiChatUrl(),
+    { Authorization: `Bearer ${apiKey}` },
+    model,
+    "OpenAI",
+    userMessage,
+    history,
+    onToolCall,
+  );
 }

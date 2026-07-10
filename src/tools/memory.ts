@@ -3,6 +3,41 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import * as crypto from "crypto";
 import { callConvex } from "../convex.js";
 import { ToolResult } from "../types.js";
+import { callLLM, hasDirectLLMKey } from "../llm.js";
+import {
+  getLocalMemoryConfig,
+  localMemoryAdd,
+  localMemorySearch,
+  localMemoryList,
+  localMemoryDelete,
+  localMemoryProfile,
+  type LocalMemoryConfig,
+} from "../local-memory.js";
+
+// ─── Local-mode extract/consolidate (LLM calls via BYOK, no Convex) ──────────
+// These mirror what the Convex-side /memory/extract and /memory/consolidate
+// routes do server-side with Noelclaw's own Anthropic key - reimplemented
+// here using callLLM() (Bankr/Anthropic/OpenAI/Grok BYOK priority) so local
+// mode never falls back to Noelclaw's paid key for LLM work either.
+
+async function localExtractFacts(text: string): Promise<string[]> {
+  const system = "Extract 3-10 discrete, atomic, independently-searchable facts, preferences, or decisions from the given text. Return ONLY a JSON array of strings - no other text, no markdown fences.";
+  const raw = await callLLM(system, text, 1024);
+  try {
+    const parsed = JSON.parse(raw.trim());
+    if (Array.isArray(parsed)) return parsed.filter((f): f is string => typeof f === "string" && f.trim().length > 0);
+  } catch { /* fall through to line-based parsing */ }
+  return raw.split("\n").map((l) => l.replace(/^[-*\d.)\s]+/, "").trim()).filter(Boolean).slice(0, 10);
+}
+
+async function localConsolidateTopic(cfg: LocalMemoryConfig, topic: string, limit: number): Promise<{ summary: string; consolidatedFrom: number }> {
+  const results = await localMemorySearch(cfg, topic, limit);
+  if (!results.length) return { summary: "", consolidatedFrom: 0 };
+  const combined = results.map((r, i) => `[${i + 1}] ${r.content}`).join("\n\n");
+  const system = "Merge the following memory fragments on one topic into a single comprehensive, deduplicated summary. Remove redundancy, keep every distinct fact. Return only the summary text.";
+  const summary = await callLLM(system, `Topic: ${topic}\n\n${combined}`, 1024);
+  return { summary, consolidatedFrom: results.length };
+}
 
 // ─── Helpers (proxied through Convex - server-side Supermemory key) ──────────
 
@@ -52,8 +87,10 @@ async function findDuplicateMemory(hash: string): Promise<{ id: string; title?: 
   const cached = lookupRecentHash(hash);
   if (cached) return cached;
   try {
-    const data: any = await callConvex("/memory/list", "POST", { n: 50 });
-    const results: any[] = data?.results ?? [];
+    const local = getLocalMemoryConfig();
+    const results: any[] = local
+      ? await localMemoryList(local, 50)
+      : ((await callConvex("/memory/list", "POST", { n: 50 }))?.results ?? []);
     const match = results.find((r) => r.metadata?.contentHash === hash);
     if (!match) return null;
     return { id: match.id, title: match.metadata?.title, addedAt: match.metadata?.addedAt };
@@ -69,13 +106,46 @@ export async function syncToSupermemory(
   metadata: Record<string, unknown>,
   sourceUrl?: string,
 ): Promise<void> {
+  const local = getLocalMemoryConfig();
+  let lastError: unknown = null;
+
+  if (local) {
+    // Same retry shape as the Convex path below - a transient local-server
+    // hiccup (e.g. mid-restart) shouldn't silently drop a vault_save-driven
+    // memory sync with only a console.error nobody sees.
+    for (let attempt = 0; attempt <= SYNC_RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        await localMemoryAdd(local, content, metadata, sourceUrl);
+        return;
+      } catch (err) {
+        lastError = err;
+        const delay = SYNC_RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) break;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+    const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
+    const preview = content.slice(0, 120).replace(/\s+/g, " ");
+    console.error(`[memory] local sync_failed after ${SYNC_RETRY_DELAYS_MS.length + 1} attempts: ${errMsg} | preview: "${preview}"`);
+    // Chronicle has no local equivalent yet, so the failure is still logged
+    // centrally (best-effort) even in local-memory mode - this is audit
+    // trail, not memory content, so it doesn't defeat the local-mode intent.
+    await callConvex("/chronicle/add", "POST", {
+      type: "system",
+      title: `Local memory sync failed after ${SYNC_RETRY_DELAYS_MS.length + 1} attempts`,
+      detail: `Error: ${errMsg}\nPreview: ${preview}`,
+      metadata: { ...metadata, sourceUrl, attempts: SYNC_RETRY_DELAYS_MS.length + 1, kind: "memory_sync_failed", backend: "local" },
+      source: "mcp",
+    }).catch(() => {});
+    return;
+  }
+
   const payload = {
     content,
     metadata,
     ...(sourceUrl ? { sourceUrl } : {}),
   };
 
-  let lastError: unknown = null;
   for (let attempt = 0; attempt <= SYNC_RETRY_DELAYS_MS.length; attempt++) {
     try {
       await callConvex("/memory/add", "POST", payload);
@@ -107,6 +177,8 @@ export async function searchSupermemory(
   limit = 10,
 ): Promise<Array<{ id: string; content: string; metadata: any; score?: number }>> {
   try {
+    const local = getLocalMemoryConfig();
+    if (local) return await localMemorySearch(local, query, limit);
     const data = await callConvex("/memory/search", "POST", { q: query, n: limit });
     return data?.results ?? [];
   } catch {
@@ -199,7 +271,27 @@ export function fuseRRF(
 // Hybrid retrieval: fan out semantic + lexical in parallel, fuse via RRF.
 // Returns the unified candidate list - callers (memory_search) layer their
 // own decay + reranking on top.
+//
+// Local mode skips the separate lexical fusion entirely: the self-hosted
+// supermemory server already does hybrid semantic+lexical search server-side
+// (that's the whole point of the RRF layer here - fusing cloud Supermemory's
+// semantic-only results with Convex's own BM25 mirror table), so re-fusing
+// on top of an already-hybrid result set would be redundant.
 export async function hybridMemorySearch(query: string, limit = 30): Promise<HybridResult[]> {
+  const local = getLocalMemoryConfig();
+  if (local) {
+    const results = await searchSupermemory(query, limit); // routes to localMemorySearch
+    return results.map((r, rank) => ({
+      id: r.id,
+      content: r.content,
+      metadata: r.metadata,
+      fusedScore: r.score ?? 1 / (RRF_K + rank),
+      semanticRank: rank,
+      lexicalRank: null,
+      score: r.score,
+    }));
+  }
+
   // Over-fetch from each side so the fusion has enough overlap to find
   // co-ranked docs. Each side returns up to `limit` items; the union is
   // capped to keep response size bounded.
@@ -443,11 +535,11 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
         }
       }
 
-      const data = await callConvex("/memory/add", "POST", {
-        content,
-        metadata: { title, tags, source: "memory_add", addedAt: Date.now(), contentHash: hash },
-        ...(sourceUrl ? { sourceUrl } : {}),
-      }).catch((err: any) => ({ error: err.message }));
+      const addMetadata = { title, tags, source: "memory_add", addedAt: Date.now(), contentHash: hash };
+      const localAdd = getLocalMemoryConfig();
+      const data = localAdd
+        ? await localMemoryAdd(localAdd, content, addMetadata, sourceUrl).catch((err: any) => ({ error: err.message }))
+        : await callConvex("/memory/add", "POST", { content, metadata: addMetadata, ...(sourceUrl ? { sourceUrl } : {}) }).catch((err: any) => ({ error: err.message }));
 
       if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
 
@@ -592,7 +684,10 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     }
 
     case "memory_profile": {
-      const data = await callConvex("/memory/profile", "GET").catch(() => null);
+      const localProfileCfg = getLocalMemoryConfig();
+      const data = localProfileCfg
+        ? await localMemoryProfile(localProfileCfg).catch(() => null)
+        : await callConvex("/memory/profile", "GET").catch(() => null);
       const total = data?.total ?? 0;
       const status = data?.status ?? "unknown";
       const space = data?.space ?? "-";
@@ -622,9 +717,19 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       const parsed = ListSchema.safeParse(args ?? {});
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
       const { limit = 20, tag } = parsed.data;
-      const data = await callConvex("/memory/list", "POST", { n: limit, tag }).catch((err: any) => ({ error: err.message }));
-      if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
-      const results: any[] = data?.results ?? [];
+      const localList = getLocalMemoryConfig();
+      let results: any[];
+      if (localList) {
+        try {
+          results = await localMemoryList(localList, limit, tag);
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      } else {
+        const data = await callConvex("/memory/list", "POST", { n: limit, tag }).catch((err: any) => ({ error: err.message })) as any;
+        if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+        results = data?.results ?? [];
+      }
       if (!results.length) return { content: [{ type: "text", text: `No memories stored yet. Use \`memory_add\` to start building your knowledge base.` }] };
       const header = `🧠 **Memories** (${results.length} shown${tag ? `, tag: ${tag}` : ""})`;
       const rows = results.map((r: any, i: number) => {
@@ -638,8 +743,17 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     case "memory_delete": {
       const parsed = DeleteMemSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
-      const data = await callConvex("/memory/delete", "POST", { id: parsed.data.id }).catch((err: any) => ({ error: err.message }));
-      if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+      const localDel = getLocalMemoryConfig();
+      if (localDel) {
+        try {
+          await localMemoryDelete(localDel, parsed.data.id);
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      } else {
+        const data = await callConvex("/memory/delete", "POST", { id: parsed.data.id }).catch((err: any) => ({ error: err.message }));
+        if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+      }
       return { content: [{ type: "text", text: `🗑️ Memory deleted: \`${parsed.data.id}\`` }] };
     }
 
@@ -744,14 +858,44 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       const parsed = ExtractSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
       const { text, source = "extract" } = parsed.data;
-      const data = await callConvex("/memory/extract", "POST", { text, source }).catch((err: any) => ({ error: err.message }));
-      if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
-      const facts: string[] = data?.facts ?? [];
+
+      const localExtractCfg = getLocalMemoryConfig();
+      let facts: string[];
+      let saved = 0;
+      if (localExtractCfg) {
+        // Local memory mode promises zero Convex/Noelclaw-proxy involvement.
+        // callLLM() would otherwise silently fall through to Noelclaw's
+        // backend when no BYOK provider key is set - fail clearly instead.
+        if (!hasDirectLLMKey()) {
+          return {
+            content: [{
+              type: "text",
+              text: "Local memory is enabled, but this tool needs an LLM to extract facts and no provider key is set (BANKR_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / GROK_API_KEY). Run `noelclaw setup` to add one - without it, this would otherwise fall back to Noelclaw's proxy, defeating the point of running memory locally.",
+            }],
+            isError: true,
+          };
+        }
+        try {
+          facts = await localExtractFacts(text);
+          const results = await Promise.allSettled(
+            facts.map((fact) => localMemoryAdd(localExtractCfg, fact, { source, addedAt: Date.now() })),
+          );
+          saved = results.filter((r) => r.status === "fulfilled").length;
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      } else {
+        const data = await callConvex("/memory/extract", "POST", { text, source }).catch((err: any) => ({ error: err.message }));
+        if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+        facts = data?.facts ?? [];
+        saved = data?.saved ?? 0;
+      }
+
       return {
         content: [{
           type: "text",
           text: [
-            `🧠 **Auto-extracted ${data?.extracted ?? facts.length} facts** (${data?.saved ?? 0} saved)`,
+            `🧠 **Auto-extracted ${facts.length} facts** (${saved} saved)`,
             ``,
             ...facts.map((f: string, i: number) => `${i + 1}. ${f}`),
             ``,
@@ -765,17 +909,48 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       const parsed = ConsolidateSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
       const { topic, limit = 12 } = parsed.data;
-      const data = await callConvex("/memory/consolidate", "POST", { topic, n: limit }).catch((err: any) => ({ error: err.message }));
-      if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+
+      const localConsolidateCfg = getLocalMemoryConfig();
+      let summary: string;
+      let consolidatedFrom: number | string;
+      let savedId = "consolidated";
+      if (localConsolidateCfg) {
+        if (!hasDirectLLMKey()) {
+          return {
+            content: [{
+              type: "text",
+              text: "Local memory is enabled, but this tool needs an LLM to consolidate memories and no provider key is set (BANKR_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / GROK_API_KEY). Run `noelclaw setup` to add one - without it, this would otherwise fall back to Noelclaw's proxy, defeating the point of running memory locally.",
+            }],
+            isError: true,
+          };
+        }
+        try {
+          const result = await localConsolidateTopic(localConsolidateCfg, topic, limit);
+          if (!result.consolidatedFrom) return { content: [{ type: "text", text: `No memories found for "${topic}" to consolidate.` }], isError: true };
+          summary = result.summary;
+          consolidatedFrom = result.consolidatedFrom;
+          const saved = await localMemoryAdd(localConsolidateCfg, summary, { title: `Consolidated: ${topic}`, source: "memory_consolidate", addedAt: Date.now(), consolidatedFrom });
+          savedId = saved.id;
+        } catch (err: any) {
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+        }
+      } else {
+        const data = await callConvex("/memory/consolidate", "POST", { topic, n: limit }).catch((err: any) => ({ error: err.message }));
+        if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+        summary = data?.summary ?? "";
+        consolidatedFrom = data?.consolidatedFrom ?? "?";
+        savedId = data?.id ?? "consolidated";
+      }
+
       return {
         content: [{
           type: "text",
           text: [
-            `🧠 **Consolidated "${topic}"** - merged ${data?.consolidatedFrom ?? "?"} memories`,
-            `Saved as: \`${data?.id ?? "consolidated"}\``,
+            `🧠 **Consolidated "${topic}"** - merged ${consolidatedFrom} memories`,
+            `Saved as: \`${savedId}\``,
             ``,
             `**Summary:**`,
-            data?.summary ?? "",
+            summary,
             ``,
             `Use \`memory_search query: "${topic}"\` to find it.`,
           ].join("\n"),

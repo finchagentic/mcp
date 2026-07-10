@@ -47,12 +47,15 @@
 
 | Feature | Description |
 |---------|-------------|
+| 🧠 **Local Memory** | Run memory tools on a free, self-hosted [supermemory](https://github.com/supermemoryai/supermemory) server on your own machine — zero cost, private, no Noelclaw account needed. `noelclaw setup` to enable. |
+| 🔑 **OpenAI BYOK** | OpenAI joins Bankr/Anthropic/Grok as a direct LLM provider. `OPENAI_BASE_URL` also lets you point at any self-hosted OpenAI-compatible gateway (LiteLLM, vLLM, Ollama, OpenRouter, your own VPS). |
+| 🧙 **`noelclaw setup`** | New guided CLI wizard — pick an LLM provider and/or enable local memory in one flow. |
 | 🧩 **Noel Shell** | Tool calling from chat — spawn agents, save to vault, search memory, estimate + execute swaps, create automations. All from a single prompt. |
 | ⚡ **`execute_swap`** | Execute token swaps on Base mainnet from Noel Shell. Enforces estimate → preview → confirm → execute flow. Routes via 0x Permit2. |
 | 🤖 **7 Agents** | Noel (AI OS), CoinGecko (market data), Sage (research), Forge (code), Quill (creative), Spectre (trading), Atlas (general) |
-| 💬 **Multi-Provider Chat** | Bankr → OpenAI → Anthropic → Groq → OpenRouter → Local fallback |
+| 💬 **Multi-Provider Chat** | Bankr → Anthropic → OpenAI → Grok → Noelclaw proxy fallback |
 | 🎫 **ConnectMcpModal** | Onboarding flow: auto-generate API key + copy install command from webapp |
-| 🔒 **Security Hardened** | 8 security boundaries, 4 vulnerability fixes (wallet, auth, OTP, private key) |
+| 🔒 **Security Hardened** | 8 security boundaries, wallet decrypt-failure protection, 4 other vulnerability fixes (auth, OTP, private key) |
 | 🧠 **Neural Graph** | Knowledge graph upgraded with glowing nodes, curved bezier edges, pulse animations |
 | 🏗️ **Ecosystem** | CI/CD, CodeQL, Dependabot, Husky, Dockerfile, coverage reporting, semantic release, TypeDoc |
 
@@ -67,7 +70,7 @@
 ### 🧠 Memory
 Semantic, versioned, deduplicated.
 
-Your AI remembers what you told it last week, last month, in a different session — and ranks recent context above stale notes via 90-day half-life decay.
+Your AI remembers what you told it last week, last month, in a different session — and ranks recent context above stale notes via 90-day half-life decay. Run `noelclaw setup` to switch to a free, self-hosted local backend instead of the Noelclaw-hosted proxy.
 
 ```bash
 remember: I prefer conservative DeFi strategies, max 5% APY
@@ -116,13 +119,13 @@ set up a daily monitor for
 
 ### One-command auto-install (any MCP client)
 ```bash
-npx -y @noelclaw/mcp@3.32.4 install
+npx -y -p @noelclaw/mcp@3.32.4 noelclaw install
 ```
 > Detects Claude Code, Cursor, Windsurf, VS Code, Zed, and configures each automatically.
 
 ### Claude Code
 ```bash
-claude mcp add noelclaw -s user -- npx -y @noelclaw/mcp@3.32.4
+claude mcp add noelclaw -s user -- npx -y -p @noelclaw/mcp@3.32.4 noelclaw-mcp
 ```
 
 ### Cursor / Windsurf / Zed
@@ -131,7 +134,7 @@ claude mcp add noelclaw -s user -- npx -y @noelclaw/mcp@3.32.4
   "mcpServers": {
     "noelclaw": {
       "command": "npx",
-      "args": ["-y", "@noelclaw/mcp@3.32.4"]
+      "args": ["-y", "-p", "@noelclaw/mcp@3.32.4", "noelclaw-mcp"]
     }
   }
 }
@@ -204,10 +207,14 @@ Works without any API keys. Add keys to unlock more:
 | `BANKR_API_KEY` | Use Bankr as your LLM gateway | Optional |
 | `ANTHROPIC_API_KEY` | Use your own Anthropic quota | Optional |
 | `OPENAI_API_KEY` | Use OpenAI for chat/research | Optional |
-| `GROQ_API_KEY` | Free LLM (Llama 3.3 70B) | Optional |
+| `OPENAI_BASE_URL` | Route OpenAI-shaped calls to a self-hosted gateway instead (LiteLLM, vLLM, Ollama, OpenRouter) | Optional |
+| `GROK_API_KEY` | Use xAI Grok (`grok-4-fast-reasoning` by default) | Optional |
+| `NOELCLAW_PROVIDER` | Force a specific provider: `bankr` \| `anthropic` \| `openai` \| `grok` | Optional |
 | `FIRECRAWL_API_KEY` | Required for `deep_research` and `web_search` | For research |
 | `GITHUB_TOKEN` | Required for `github_search_code` | For GitHub |
 | `ALCHEMY_API_KEY` | Faster Base chain queries | Optional |
+
+Run `npx -y -p @noelclaw/mcp@3.32.7 noelclaw setup` for a guided wizard instead of setting these by hand - it also offers free, self-hosted local memory.
 
 </details>
 

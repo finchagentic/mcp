@@ -3,6 +3,7 @@ import { callConvex } from "../convex.js";
 import { ToolResult } from "../types.js";
 import { getTier } from "../token-gate.js";
 import { getOrCreateWallet } from "../wallet.js";
+import { getLocalMemoryConfig, isLocalMemoryReachable, localMemoryProfile } from "../local-memory.js";
 
 const CONVEX_SITE = process.env.NOELCLAW_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
 
@@ -41,10 +42,19 @@ export const OS_TOOLS: Tool[] = [
 export async function handleOsTool(name: string, args: unknown): Promise<ToolResult | null> {
   switch (name) {
     case "noel_status": {
+      // Respect local memory mode here too - querying Convex's /memory/profile
+      // when writes have been going to a local supermemory server instead
+      // would report a stale/zero count (the exact bug memory_profile's own
+      // handler was fixed to avoid).
+      const localStatusCfg = getLocalMemoryConfig();
+      const memoryProfileCall = localStatusCfg
+        ? localMemoryProfile(localStatusCfg)
+        : callConvex("/memory/profile", "GET");
+
       const [tierResult, walletResult, memRes, autoRes, vaultRes, agentsRes] = await Promise.allSettled([
         getTier(),
         getOrCreateWallet(),
-        callConvex("/memory/profile", "GET"),
+        memoryProfileCall,
         callConvex("/automations/list", "GET", undefined, "list_automations"),
         callConvex("/vault/list?type=research&limit=5", "GET", undefined, "noel_status"),
         callConvex("/vault/list?type=memory&limit=20", "GET", undefined, "noel_status"),
@@ -139,6 +149,7 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
       const envKeys = {
         "BANKR_API_KEY":          !!process.env.BANKR_API_KEY,
         "ANTHROPIC_API_KEY":      !!process.env.ANTHROPIC_API_KEY,
+        "OPENAI_API_KEY":         !!process.env.OPENAI_API_KEY,
         "GROK_API_KEY":           !!process.env.GROK_API_KEY,
         "FIRECRAWL_API_KEY":      !!process.env.FIRECRAWL_API_KEY,
         "NOELCLAW_SESSION_TOKEN": !!process.env.NOELCLAW_SESSION_TOKEN,
@@ -146,22 +157,34 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
         "TELEGRAM_BOT_TOKEN":     !!process.env.TELEGRAM_BOT_TOKEN,
       };
 
-      const [convexStatus, fcStatus, smStatus] = await Promise.all([
+      const localMemCfg = getLocalMemoryConfig();
+
+      const pingLocalMemory = async (): Promise<"ok" | "error" | "unconfigured"> => {
+        if (!localMemCfg) return "unconfigured";
+        return (await isLocalMemoryReachable(localMemCfg)) ? "ok" : "error";
+      };
+
+      const [convexStatus, fcStatus, smStatus, localSmStatus] = await Promise.all([
         // Ping the public platform stats route — runs a real DB query, so a 200
         // confirms Convex is actually serving, not just that the HTTP router is up.
         ping(`${CONVEX_URL}/stats/platform`),
         process.env.FIRECRAWL_API_KEY ? ping(FC_URL) : Promise.resolve("unconfigured" as const),
-        ping(SM_URL),
+        // Cloud Supermemory is only relevant when NOT running local memory -
+        // that's the legacy path memory tools fall back to via Convex.
+        localMemCfg ? Promise.resolve("unconfigured" as const) : ping(SM_URL),
+        pingLocalMemory(),
       ]);
 
       const statusIcon = (s: "ok" | "error" | "unconfigured") =>
         s === "ok" ? "✅" : s === "unconfigured" ? "⚪" : "❌";
 
-      const llmConfigured = envKeys["BANKR_API_KEY"] || envKeys["ANTHROPIC_API_KEY"] || envKeys["GROK_API_KEY"];
+      const llmConfigured = envKeys["BANKR_API_KEY"] || envKeys["ANTHROPIC_API_KEY"] || envKeys["OPENAI_API_KEY"] || envKeys["GROK_API_KEY"];
 
       const hints: string[] = [];
       if (!llmConfigured) hints.push(`→ No LLM key set — deep_research, ask_noel, market_thesis, and agent tools won't work.`);
       if (!envKeys["FIRECRAWL_API_KEY"]) hints.push(`→ No FIRECRAWL_API_KEY — deep_research falls back to Noelclaw proxy (requires session token).`);
+      if (!localMemCfg) hints.push(`→ Memory tools use the Noelclaw-hosted proxy. Run \`noelclaw setup\` for free, self-hosted local memory.`);
+      else if (localSmStatus !== "ok") hints.push(`→ Local memory configured but ${localMemCfg.url} isn't reachable — memory tools will fail. Run \`npx -y supermemory local\`.`);
 
       const lines = [
         `## 🩺 Noelclaw Diagnostics`,
@@ -169,12 +192,13 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
         `**Services:**`,
         `  ${statusIcon(convexStatus)}  Convex backend       ${convexStatus === "ok" ? "reachable" : "unreachable — check NOELCLAW_CONVEX_URL"}`,
         `  ${statusIcon(fcStatus)}  Firecrawl            ${fcStatus === "ok" ? "reachable" : fcStatus === "unconfigured" ? "no FIRECRAWL_API_KEY — deep_research will use proxy" : "unreachable"}`,
-        `  ${statusIcon(smStatus)}  Supermemory          ${smStatus === "ok" ? "reachable" : "unreachable — memory tools may fail"}`,
+        `  ${statusIcon(smStatus)}  Supermemory (cloud)  ${localMemCfg ? "not used — local memory active" : smStatus === "ok" ? "reachable" : "unreachable — memory tools may fail"}`,
+        `  ${statusIcon(localSmStatus)}  Supermemory (local)  ${localMemCfg ? (localSmStatus === "ok" ? `reachable at ${localMemCfg.url}` : `configured but unreachable at ${localMemCfg.url}`) : "not configured — run `noelclaw setup`"}`,
         ``,
         `**API Keys configured:**`,
         ...Object.entries(envKeys).map(([k, v]) => `  ${v ? "✅" : "⚪"}  ${k}`),
         ``,
-        `**LLM:** ${llmConfigured ? "✅ configured" : "⚠️  no LLM key — set BANKR_API_KEY, ANTHROPIC_API_KEY, or GROK_API_KEY"}`,
+        `**LLM:** ${llmConfigured ? "✅ configured" : "⚠️  no LLM key — set BANKR_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GROK_API_KEY"}`,
         ...(hints.length ? [``, ...hints] : []),
       ];
 

@@ -3,7 +3,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { callConvex } from "../convex.js";
 import { callLLM } from "../llm.js";
 import { ToolResult } from "../types.js";
-import { searchSupermemory } from "./memory.js";
+import { searchSupermemory, syncToSupermemory } from "./memory.js";
 import { enrichQuery, todayContext } from "../enrichment-router.js";
 import { checkSignal } from "../signal-gate.js";
 
@@ -412,9 +412,13 @@ export async function handleInsightTool(name: string, args: unknown): Promise<To
       finalAnswer = `${answer}\n\n_⚠️ ${signal.reason}. Consider rephrasing or using \`deep_research\` for grounded sources._`;
     }
 
-    callConvex("/memory/add", "POST", {
-      content: `Q: ${question.slice(0, 200)}\nA: ${finalAnswer.slice(0, 400)}`,
-    }, "ask_noel_memory").catch(() => {});
+    // syncToSupermemory (not a direct callConvex call) so this respects
+    // local-memory mode too - otherwise every ask_noel exchange would keep
+    // uploading to Convex regardless of the user's configured backend.
+    syncToSupermemory(
+      `Q: ${question.slice(0, 200)}\nA: ${finalAnswer.slice(0, 400)}`,
+      { source: "ask_noel", addedAt: Date.now() },
+    ).catch(() => {});
 
     const contextHeader = formatContextHeader(meta);
     return { content: [{ type: "text", text: contextHeader + finalAnswer }] };
