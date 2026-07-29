@@ -10,7 +10,7 @@ import {
   localVaultDelete, localVaultTag, localVaultLink, localVaultRelated,
   localVaultStoreCredential, localVaultGetCredential,
 } from "../local-vault.js";
-import { getLocalMemoryConfig } from "../local-memory.js";
+import { getLocalMemoryConfig, localMemoryDeleteByVaultKey } from "../local-memory.js";
 
 const VAULT_TYPES = ["research", "execution", "workflow", "prompt", "file", "memory", "credential"] as const;
 
@@ -756,7 +756,22 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
         ? localVaultDelete(localVault, parsed.data.key)
         : await callConvex("/vault/delete", "POST", { key: parsed.data.key }, "vault_delete");
       if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
-      return { content: [{ type: "text", text: `🗑️ Deleted: \`${parsed.data.key}\` (${data.versionsRemoved ?? 0} versions removed)` }] };
+
+      // vault_save mirrors non-credential entries into memory for search - a
+      // "PERMANENT... cannot be undone" delete that leaves that mirror intact
+      // is not actually permanent. Only relevant for the local memory-file
+      // backend (the hosted Convex path cleans its own memories table inside
+      // the /vault/delete mutation itself, same request, no separate call).
+      let memoriesRemoved = 0;
+      const localMem = getLocalMemoryConfig();
+      if (localMem) {
+        memoriesRemoved = localMemoryDeleteByVaultKey(localMem, parsed.data.key);
+      } else if (typeof data.memoriesRemoved === "number") {
+        memoriesRemoved = data.memoriesRemoved;
+      }
+      const memoryNote = memoriesRemoved > 0 ? ` + ${memoriesRemoved} memory mirror${memoriesRemoved === 1 ? "" : "s"} removed` : "";
+
+      return { content: [{ type: "text", text: `🗑️ Deleted: \`${parsed.data.key}\` (${data.versionsRemoved ?? 0} versions removed${memoryNote})` }] };
     }
 
     case "vault_tag": {
