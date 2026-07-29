@@ -7,8 +7,8 @@ import * as crypto from "crypto";
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 
 // Read RPC - balance, gas, nonce lookups. Speed > privacy for reads.
-// Override with NOELCLAW_RPC_URL if you want a single custom endpoint.
-export const BASE_RPC = process.env.NOELCLAW_RPC_URL
+// Override with FINCH_RPC_URL if you want a single custom endpoint.
+export const BASE_RPC = process.env.FINCH_RPC_URL
   ?? (ALCHEMY_API_KEY
     ? `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`
     : "https://mainnet.base.org");
@@ -21,12 +21,12 @@ export const BASE_RPC = process.env.NOELCLAW_RPC_URL
 // Note: Base's sequencer is already centralized (Coinbase) and does not expose
 // a public mempool the way Ethereum L1 does - MEV exposure is materially
 // lower than mainnet. This setting is for users who want belt-and-suspenders.
-export const BROADCAST_RPC = process.env.NOELCLAW_BROADCAST_RPC ?? BASE_RPC;
-export const MEV_PROTECT_ENABLED = !!process.env.NOELCLAW_BROADCAST_RPC;
+export const BROADCAST_RPC = process.env.FINCH_BROADCAST_RPC ?? BASE_RPC;
+export const MEV_PROTECT_ENABLED = !!process.env.FINCH_BROADCAST_RPC;
 
 export const BASE_CHAIN_ID = 8453;
 
-const WALLET_DIR = path.join(os.homedir(), ".noelclaw");
+const WALLET_DIR = path.join(os.homedir(), ".finch");
 const WALLET_FILE = path.join(WALLET_DIR, "wallet.json");
 let _cachedWallet: ethers.Wallet | ethers.HDNodeWallet | null = null;
 
@@ -37,7 +37,7 @@ export function getMachineKey(): string {
   // Without it, the key is derived from public machine info only - this is
   // convenience encryption (prevents casual reads), not security against
   // an attacker who has read access to both the file and system info.
-  const passphrase = process.env.NOELCLAW_WALLET_PASSPHRASE ?? "";
+  const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
   return crypto
     .createHash("sha256")
     .update(passphrase + os.hostname() + os.platform() + os.arch())
@@ -46,15 +46,15 @@ export function getMachineKey(): string {
 }
 
 let _passphraseWarned = false;
-function warnIfNoPassphrase(): void {
-  if (_passphraseWarned || process.env.NOELCLAW_WALLET_PASSPHRASE) return;
+export function warnIfNoPassphrase(): void {
+  if (_passphraseWarned || process.env.FINCH_WALLET_PASSPHRASE) return;
   _passphraseWarned = true;
   // stderr only - stdout is reserved for MCP JSON-RPC framing when running as a server.
   process.stderr.write(
-    "\n⚠️  NOELCLAW_WALLET_PASSPHRASE is not set. Your Base mainnet wallet " +
+    "\n⚠️  FINCH_WALLET_PASSPHRASE is not set. Your Base mainnet wallet " +
     `(${WALLET_FILE}) is encrypted with a key derived only from this machine's ` +
     "hostname/platform/arch - low entropy, and crackable by anyone who copies the " +
-    "file (backup sync, stolen disk, malware). Set NOELCLAW_WALLET_PASSPHRASE to a " +
+    "file (backup sync, stolen disk, malware). Set FINCH_WALLET_PASSPHRASE to a " +
     "strong secret for real protection. This wallet holds real funds.\n\n"
   );
 }
@@ -70,13 +70,13 @@ export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNode
       return wallet;
     } catch (err: any) {
       // A wallet file already exists but couldn't be decrypted - this almost
-      // always means NOELCLAW_WALLET_PASSPHRASE (or the machine info the key
+      // always means FINCH_WALLET_PASSPHRASE (or the machine info the key
       // is derived from) doesn't match what encrypted it. Silently creating
       // a fresh wallet here would overwrite the existing encrypted file,
       // orphaning it and any funds it controls. Refuse instead.
       throw new Error(
         `Could not decrypt existing wallet at ${WALLET_FILE}: ${err?.message ?? "unknown error"}\n\n` +
-        `This usually means NOELCLAW_WALLET_PASSPHRASE doesn't match the passphrase ` +
+        `This usually means FINCH_WALLET_PASSPHRASE doesn't match the passphrase ` +
         `used when this wallet was encrypted (or this is a different machine). ` +
         `Refusing to auto-create a replacement wallet, since that would silently ` +
         `orphan the existing one and any funds it holds.\n\n` +
@@ -95,7 +95,7 @@ export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNode
 export async function signRequest(toolName: string): Promise<{ address: string; signature: string; timestamp: string }> {
   const wallet = await getOrCreateWallet();
   const timestamp = Date.now().toString();
-  const signature = await wallet.signMessage(`noelclaw:${toolName}:${timestamp}`);
+  const signature = await wallet.signMessage(`finch:${toolName}:${timestamp}`);
   return { address: wallet.address, signature, timestamp };
 }
 
