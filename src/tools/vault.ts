@@ -317,6 +317,20 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     case "vault_save": {
       const parsed = SaveSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (parsed.data.type === "credential") {
+        // vault_save writes plaintext to disk/DB - "credential" is only a
+        // valid FILTER value for vault_list/search/export (which correctly
+        // exclude it), never a valid type to actually SAVE through here.
+        // vault_store_credential is the only path that encrypts at rest.
+        return {
+          content: [{
+            type: "text",
+            text: "Use `vault_store_credential` to save a secret - it encrypts at rest (AES-256-GCM). " +
+              "`vault_save` writes plaintext, so `type: \"credential\"` is refused here.",
+          }],
+          isError: true,
+        };
+      }
 
       // Auto-generate title from content if not provided
       const firstLine = parsed.data.content.split("\n")[0].replace(/^#+\s*/, "").slice(0, 80);
@@ -478,7 +492,12 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
       // entries are indexed as multiple chunks tagged with isVaultChunk +
       // vaultKey - group chunks back to their parent entry so the result
       // list shows one row per entry, not one row per chunk.
-      {
+      //
+      // Skipped entirely when vaultBackend is local - a local vault's whole
+      // point is "no network," so the query string must never leave the
+      // machine, not even to check for results before falling back to the
+      // (always-local) full-text branch below.
+      if (!localVault) {
         const limit = parsed.data.limit ?? 20;
         // Over-fetch so that after chunk dedup we still have ~limit rows.
         const smResults = await searchSupermemory(parsed.data.query, Math.min(50, limit * 3));
@@ -531,7 +550,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
               .sort((a, b) => b.bestScore - a.bestScore)
               .slice(0, limit);
 
-            const header = `🔍 **Vault Search** [Semantic]: "${parsed.data.query}" - ${grouped.length} entry/entries`;
+            const header = `🔍 **Vault Search**: "${parsed.data.query}" - ${grouped.length} entry/entries`;
             const rows = grouped.map((g, i) => {
               const score = g.bestScore ? ` ${(g.bestScore * 100).toFixed(0)}%` : "";
               const chunkBadge = g.isVaultChunk && g.chunkHits > 1

@@ -4,6 +4,7 @@ import * as crypto from "crypto";
 import { callConvex } from "../convex.js";
 import { ToolResult } from "../types.js";
 import { assertPublicUrl, refuseUrlText } from "../public-url.js";
+import { getLocalVaultConfig, localVaultSearch } from "../local-vault.js";
 import {
   getLocalMemoryConfig,
   localMemoryAdd,
@@ -56,6 +57,16 @@ function lookupRecentHash(hash: string): { id: string; title?: string; addedAt: 
     return null;
   }
   return hit;
+}
+
+// memory_delete must purge this too - otherwise a deleted memory's hash stays
+// cached (up to an hour) and re-adding the exact same content within that
+// window gets silently skipped as a "duplicate" of an id that no longer
+// exists, when there is no longer any real duplicate to skip.
+function forgetRecentHashById(id: string): void {
+  for (const [hash, entry] of recentHashCache) {
+    if (entry.id === id) { recentHashCache.delete(hash); break; }
+  }
 }
 
 // Two-tier dedup lookup: in-process cache first (catches same-session
@@ -751,7 +762,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
         content: [{
           type: "text",
           text: [
-            `🧠 **Finch Semantic Memory**`,
+            `🧠 **Finch Memory**`,
             ``,
             `Space: \`${space}\``,
             `Total memories: **${total}**`,
@@ -762,7 +773,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
             `• memory_add (URL indexing) - ✅`,
             `• Google Drive / Gmail / Notion - connect at finchagentic.com`,
             ``,
-            `**Capabilities:** Semantic search · Vector context · 81.6% LongMemEval`,
+            `**Capabilities:** Full-text (keyword) search with 90-day time-decay ranking - not embeddings, no vector search.`,
           ].join("\n"),
         }],
         structuredContent: buildMemoryProfile(data),
@@ -821,6 +832,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
         const data = await callConvex("/memory/delete", "POST", { id: parsed.data.id }, "memory_delete").catch((err: any) => ({ error: err.message }));
         if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
       }
+      forgetRecentHashById(parsed.data.id);
       return { content: [{ type: "text", text: `🗑️ Memory deleted: \`${parsed.data.id}\`` }] };
     }
 
@@ -833,10 +845,15 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
 
       // v3.25.1: hybrid retrieval for memory side (was semantic-only) so the
       // intelligence report surfaces exact-token matches alongside meaning
-      // matches. Vault side runs in parallel as before.
+      // matches. Vault side runs in parallel as before - but only against
+      // Convex when the vault isn't local; a local vault's topic string must
+      // never leave the machine, and this never checked that before.
+      const localVault = getLocalVaultConfig();
       const [memResults, vaultData] = await Promise.all([
         hybridMemorySearch(topic, memLimit),
-        callConvex(`/vault/search?q=${encodeURIComponent(topic)}&limit=6`, "GET", undefined, "vault_search").catch(() => ({ results: [] })),
+        localVault
+          ? Promise.resolve(localVaultSearch(localVault, topic, { limit: 6 }))
+          : callConvex(`/vault/search?q=${encodeURIComponent(topic)}&limit=6`, "GET", undefined, "vault_search").catch(() => ({ results: [] })),
       ]);
 
       const vaultResults: any[] = vaultData.results ?? [];
