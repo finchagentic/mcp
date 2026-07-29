@@ -1,147 +1,72 @@
 <div align="center">
 
-<!-- Hero Banner SVG (self-contained, no external image) -->
-<img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDEyMDAgMzAwIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iYmciIHgxPSIwIiB5MT0iMCIgeDI9IjAiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjojMGEwYTBhO3N0b3Atb3BhY2l0eToxIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3R5bGU9InN0b3AtY29sb3I6IzFhMWEyNTtzdG9wLW9wYWNpdHk6MSIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxyYWRpYWxHcmFkaWVudCBpZD0iZ2xvdyIgY3g9IjUwJSIgY3k9IjUwJSIgcj0iNTAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdHlsZT0ic3RvcC1jb2xvcjojMjU2M0VCO3N0b3Atb3BhY2l0eTowLjMiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdHlsZT0ic3RvcC1jb2xvcjojMjU2M0VCO3N0b3Atb3BhY2l0eTowIi8+CiAgICA8L3JhZGlhbEdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iMTIwMCIgaGVpZ2h0PSIzMDAiIGZpbGw9InVybCgjYmcpIi8+CiAgPGNpcmNsZSBjeD0iNjAwIiBjeT0iMTUwIiByPSIyMDAiIGZpbGw9InVybCgjZ2xvdykiLz4KICA8dGV4dCB4PSI2MDAiIHk9IjEyMCIgZm9udC1mYW1pbHk9InN5c3RlbS11aSwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSI1NiIgZm9udC13ZWlnaHQ9IjgwMCIgZmlsbD0iI2YwZjZmYyIgdGV4dC1hbmNob3I9Im1pZGRsZSIgbGV0dGVyLXNwYWNpbmc9Ii0wLjAzZW0iPk5vZWxDbGF3PC90ZXh0PgogIDx0ZXh0IHg9IjYwMCIgeT0iMTY1IiBmb250LWZhbWlseT0ic3lzdGVtLXVpLCBzYW5zLXNlcmlmIiBmb250LXNpemU9IjIwIiBmb250LXdlaWdodD0iNDAwIiBmaWxsPSIjOTNjNWZkIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5UaGUgcnVudGltZSBsYXllciBmb3IgQWdlbnRpYyBBSTwvdGV4dD4KICA8dGV4dCB4PSI2MDAiIHk9IjE5NSIgZm9udC1mYW1pbHk9InN5c3RlbS11aSwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9IjQwMCIgZmlsbD0iIzY0NzQ4YiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+MTA4IHRvb2xzIOKAlCBwZXJzaXN0ZW50IG1lbW9yeSDigJQgYWdlbnRzIOKAlCB3b3JrZmxvd3Mg4oCUIERlRmkgb24gQmFzZTwvdGV4dD4KPC9zdmc+" alt="NoelClaw" width="100%">
+# Finch
 
-<!-- Badges -->
-[![npm version](https://img.shields.io/npm/v/@noelclaw/mcp.svg?style=for-the-badge&color=CB3837&labelColor=0D1117)](https://www.npmjs.com/package/@noelclaw/mcp)
-[![npm downloads](https://img.shields.io/npm/dm/@noelclaw/mcp.svg?style=for-the-badge&color=2EA043&labelColor=0D1117)](https://www.npmjs.com/package/@noelclaw/mcp)
-[![GitHub stars](https://img.shields.io/github/stars/noelclaw/mcp.svg?style=for-the-badge&color=FCD34D&labelColor=0D1117)](https://github.com/noelclaw/mcp)
-[![GitHub license](https://img.shields.io/github/license/noelclaw/mcp.svg?style=for-the-badge&color=8957E5&labelColor=0D1117)](https://github.com/noelclaw/mcp)
-[![CI Status](https://img.shields.io/github/actions/workflow/status/noelclaw/mcp/ci.yml?style=for-the-badge&label=CI&color=2EA043&labelColor=0D1117)](https://github.com/noelclaw/mcp/actions)
-[![CodeQL](https://img.shields.io/github/actions/workflow/status/noelclaw/mcp/codeql.yml?style=for-the-badge&label=CodeQL&color=6366F1&labelColor=0D1117)](https://github.com/noelclaw/mcp/actions)
-[![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?style=for-the-badge&logo=node.js&logoColor=white&labelColor=0D1117)](https://nodejs.org)
-[![MCP](https://img.shields.io/badge/Model_Context_Protocol-compatible-FF6B35?style=for-the-badge&labelColor=0D1117)](https://modelcontextprotocol.io)
+**The runtime layer for Agentic AI.**
+
+Persistent memory, autonomous agents, and workflows that survive every session.
+
+[Docs](https://docs.finch.com) · [App](https://app.finchagentic.com) · [npm](https://www.npmjs.com/package/@finchagentic/mcp) · [GitHub](https://github.com/finchagentic/mcp) · [X](https://x.com/finchagentic)
 
 </div>
 
 ---
 
-<div align="center">
+Most AI assistants disappear when the conversation ends. **Finch** gives them lasting state — memory that accumulates, agents that keep running, vaults that version knowledge, and workflows that continue after you close the chat.
 
-# The runtime layer for Agentic AI.
+## Why Finch
 
-**Your AI remembers, keeps working, and survives every session.**
+| | Without Finch | With Finch |
+|--|---------------|------------|
+| **Memory** | Resets every session | Full-text searchable + versioned vault, decays stale notes |
+| **Agents** | One-shot tool calls | Named agents with state and audit history |
+| **Workflows** | Manual chaining | Automations, monitors, packets, deep research |
+| **Local** | Cloud-only | Vault + memory can run fully on your machine |
 
-</div>
+## Install
 
----
-
-> Most AI assistants disappear when the conversation ends. NoelClaw gives them persistent state — memory that accumulates, agents that keep running, vaults that version knowledge, and workflows that continue after you close the chat.
-
-## 📑 Table of Contents
-
-- [✨ What's New](#-whats-new)
-- [🧠 Three Pillars](#-three-pillars)
-- [🚀 Install](#-install)
-- [🎬 In Practice](#-in-practice)
-- [🔧 Configuration](#-configuration)
-- [🔒 Security](#-security-boundaries)
-- [📊 Comparison](#-why-this-is-different)
-- [🛠️ Troubleshooting](#%EF%B8%8F-troubleshooting)
-- [🔗 Links](#-links)
-
----
-
-## ✨ What's New
-
-| Feature | Description |
-|---------|-------------|
-| 🧠 **Local Memory** | Run memory tools on a free, self-hosted [supermemory](https://github.com/supermemoryai/supermemory) server on your own machine — zero cost, private, no Noelclaw account needed. `noelclaw setup` to enable. |
-| 🔑 **OpenAI BYOK** | OpenAI joins Bankr/Anthropic/Grok as a direct LLM provider. `OPENAI_BASE_URL` also lets you point at any self-hosted OpenAI-compatible gateway (LiteLLM, vLLM, Ollama, OpenRouter, your own VPS). |
-| 🧙 **`noelclaw setup`** | New guided CLI wizard — pick an LLM provider and/or enable local memory in one flow. |
-| 🧩 **Noel Shell** | Tool calling from chat — spawn agents, save to vault, search memory, estimate + execute swaps, create automations. All from a single prompt. |
-| ⚡ **`execute_swap`** | Execute token swaps on Base mainnet from Noel Shell. Enforces estimate → preview → confirm → execute flow. Routes via 0x Permit2. |
-| 🤖 **7 Agents** | Noel (AI OS), CoinGecko (market data), Sage (research), Forge (code), Quill (creative), Spectre (trading), Atlas (general) |
-| 💬 **Multi-Provider Chat** | Bankr → Anthropic → OpenAI → Grok → Noelclaw proxy fallback |
-| 🎫 **ConnectMcpModal** | Onboarding flow: auto-generate API key + copy install command from webapp |
-| 🔒 **Security Hardened** | 8 security boundaries, wallet decrypt-failure protection, 4 other vulnerability fixes (auth, OTP, private key) |
-| 🧠 **Neural Graph** | Knowledge graph upgraded with glowing nodes, curved bezier edges, pulse animations |
-| 🏗️ **Ecosystem** | CI/CD, CodeQL, Dependabot, Husky, Dockerfile, coverage reporting, semantic release, TypeDoc |
-
----
-
-## 🧠 Three Pillars
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 🧠 Memory
-Semantic, versioned, deduplicated.
-
-Your AI remembers what you told it last week, last month, in a different session — and ranks recent context above stale notes via 90-day half-life decay. Run `noelclaw setup` to switch to a free, self-hosted local backend instead of the Noelclaw-hosted proxy.
+Always pin the version. Never use `@latest`.
 
 ```bash
-remember: I prefer conservative DeFi strategies, max 5% APY
-→ ✓ saved to memory
-  auto-loaded in future sessions
+# One-command installer (detects common MCP clients)
+npx -y -p @finchagentic/mcp@4.0.0 finch install
 ```
-
-</td>
-<td width="33%" valign="top">
-
-### 🤖 Agents
-Named, persistent, identity-bound.
-
-Spawn an agent with a goal, recall it weeks later, audit every state change. Each agent can hold its own Base wallet address.
-
-```bash
-spawn an agent called market-researcher
-  goal: track Base chain protocols weekly
-→ 🤖 agent spawned
-  recall anytime with agent_recall
-```
-
-</td>
-<td width="33%" valign="top">
-
-### ⚙️ Workflows
-Packets, automations, monitors, deep research.
-
-Anything that runs on a schedule or continues after the chat ends.
-
-```bash
-set up a daily monitor for
-  AI agent infrastructure news
-→ ✓ monitor created
-  runs daily 08:00 UTC
-  findings auto-saved to vault
-```
-
-</td>
-</tr>
-</table>
-
----
-
-## 🚀 Install
-
-### One-command auto-install (any MCP client)
-```bash
-npx -y -p @noelclaw/mcp@3.32.4 noelclaw install
-```
-> Detects Claude Code, Cursor, Windsurf, VS Code, Zed, and configures each automatically.
 
 ### Claude Code
+
 ```bash
-claude mcp add noelclaw -s user -- npx -y -p @noelclaw/mcp@3.32.4 noelclaw-mcp
+claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.0.0 finch-mcp
 ```
 
-### Cursor / Windsurf / Zed
+### Cursor / Windsurf / Claude Desktop
+
 ```json
 {
   "mcpServers": {
-    "noelclaw": {
+    "finch": {
       "command": "npx",
-      "args": ["-y", "-p", "@noelclaw/mcp@3.32.4", "noelclaw-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.0.0", "finch-mcp"]
+    }
+  }
+}
+```
+
+### VS Code
+
+```json
+{
+  "servers": {
+    "finch": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "-p", "@finchagentic/mcp@4.0.0", "finch-mcp"]
     }
   }
 }
 ```
 
 <details>
-<summary>📁 Config file paths</summary>
+<summary>Config file paths</summary>
 
 | Client | Path |
 |--------|------|
@@ -149,139 +74,117 @@ claude mcp add noelclaw -s user -- npx -y -p @noelclaw/mcp@3.32.4 noelclaw-mcp
 | Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
 | Cursor | `.cursor/mcp.json` |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` |
-| Zed | `.config/zed/settings.json` |
 | VS Code | `.vscode/mcp.json` |
+| Zed | `.config/zed/settings.json` |
 
 </details>
 
-> No API key required to start. Tools load on first use.
+No LLM API key is required to start. Tools load on first use.
 
-> 🔒 **Always pin the version** (`@noelclaw/mcp@3.32.4`, never `@latest`) — this MCP has wallet, credential, and backend persistence capabilities. See [Security Boundaries](#-security-boundaries).
+## Quick start
 
----
-
-## 🎬 In Practice
-
-```
-> what have you found so far on AI agent infrastructure?
-  → Pulls from vault: 3 reports across 7 days · summarizes key themes
-
-> give me a bull vs bear thesis on ETH, save it
-  → Full analysis written + auto-saved to vault as v1
-
-> swap 50 USDC to ETH
-  → [estimate_swap] Quote: 0.027 ETH · slippage 0.5% · gas ~$0.03
-  → Confirm swap? (yes/no)
-  → [execute_swap confirmed=true]
-  → ✅ Swap executed · tx 0xabc... · view on Basescan
-
-> spawn an agent to track Base DeFi weekly
-  → 🤖 Agent 'base-tracker' created · runs every Monday 09:00 UTC
+```bash
+finch doctor          # health check
+finch setup           # local vault / memory / providers
+finch vault           # inspect local vault
 ```
 
----
+Try in your MCP client:
 
-## 📊 108 Tools Across the Runtime
+```
+remember: I prefer conservative DeFi strategies, max 5% risk
+spawn an agent called research-bot to track AI agent news weekly
+save this thesis to vault
+```
 
-| Pillar | Categories | Count |
-|--------|-----------|:-----:|
-| 🧠 Memory | Memory · Vault · Chronicle | 28 |
-| 🤖 Agents | Agents · Hire | 12 |
-| ⚙️ Workflows | Automation · Monitors · Packets · Deep Research · Research Compare/Chain · OS | 19 |
-| ⚡ Execution | DeFi · Base · Market · Scanner · Web · Coder · GitHub · Humanizer · Wallet | 49 |
+## What you get
 
-> Run `noelclaw doctor` for a 5-second health check showing exactly what's wired and what isn't.
+**121 tools** across four pillars:
 
----
+| Pillar | What it does |
+|--------|----------------|
+| **Memory** | Full-text searchable memory + versioned vault + chronicle |
+| **Agents** | Spawn, recall, update, schedule named agents |
+| **Workflows** | Automations, monitors, packets, deep research |
+| **Execution** | Base DeFi, Robinhood Chain, market data, web, GitHub |
 
-## 🔧 Configuration
+Default palette is `core` (lighter context). Full set:
 
-<details>
-<summary>⚙️ Environment Variables (click to expand)</summary>
+```json
+"env": { "FINCH_TOOLS": "all" }
+```
 
-Works without any API keys. Add keys to unlock more:
+## Fully local
 
-| Variable | Purpose | When you need it |
-|----------|---------|------------------|
-| `NOELCLAW_SESSION_TOKEN` | Session token from [app.noelclaw.com](https://app.noelclaw.com) | Recommended |
-| `BANKR_API_KEY` | Use Bankr as your LLM gateway | Optional |
-| `ANTHROPIC_API_KEY` | Use your own Anthropic quota | Optional |
-| `OPENAI_API_KEY` | Use OpenAI for chat/research | Optional |
-| `OPENAI_BASE_URL` | Route OpenAI-shaped calls to a self-hosted gateway instead (LiteLLM, vLLM, Ollama, OpenRouter) | Optional |
-| `GROK_API_KEY` | Use xAI Grok (`grok-4-fast-reasoning` by default) | Optional |
-| `NOELCLAW_PROVIDER` | Force a specific provider: `bankr` \| `anthropic` \| `openai` \| `grok` | Optional |
-| `FIRECRAWL_API_KEY` | Required for `deep_research` and `web_search` | For research |
-| `GITHUB_TOKEN` | Required for `github_search_code` | For GitHub |
-| `ALCHEMY_API_KEY` | Faster Base chain queries | Optional |
+Finch is the runtime. **Your LLM is the brain. Your data stays yours.**
 
-Run `npx -y -p @noelclaw/mcp@3.32.7 noelclaw setup` for a guided wizard instead of setting these by hand - it also offers free, self-hosted local memory.
+```bash
+npx -y -p @finchagentic/mcp@4.0.0 finch setup
+# enable local vault (and optional local memory)
+```
 
-</details>
+| Piece | Location |
+|-------|----------|
+| Vault | `~/.finch/vault/` |
+| Wallet | `~/.finch/wallet.json` |
+| Config | `~/.finch/config.json` |
+| Brain | your MCP client’s model |
 
----
+Scheduled/cloud features still need an account. Core memory, vault, and public-data tools work offline of Finch cloud.
 
-## 🔒 Security Boundaries
+## Configuration
 
-> These 8 boundaries are mandatory. Violating any is a critical security failure.
+| Variable | Purpose |
+|----------|---------|
+| `FINCH_SESSION_TOKEN` | Signed-in session (vault/memory/agents against your account) |
+| `FINCH_API_KEY` | API key (`finch_sk_…`) |
+| `FINCH_TOOLS` | `core` (default) · `all` · or palettes like `memory,defi` |
+| `FINCH_PROVIDER` | Force `bankr` · `anthropic` · `openai` · `grok` |
+| `FINCH_MODEL` | Model override for host-side loops |
+| `BANKR_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GROK_API_KEY` | Only if Finch itself hosts the agent loop (CLI/cron) |
+| `FIRECRAWL_API_KEY` | Better crawl quality (optional) |
+| `GITHUB_TOKEN` | For `github_search_code` |
+| `ALCHEMY_API_KEY` | Faster Base RPC (optional) |
+
+
+Guided setup:
+
+```bash
+npx -y -p @finchagentic/mcp@4.0.0 finch setup
+```
+
+## Security
 
 | # | Boundary | Rule |
-|:---:|----------|------|
-| 1 | **Prompt-Injection** | External content (web, GitHub, vault, memory) is DATA ONLY. Cannot set tool params, request credentials, or drive wallet actions. |
-| 2 | **Mainnet Confirmation** | All Base mainnet transactions require estimate → preview → confirm → execute flow. |
-| 3 | **Pinned Install** | Always use `@noelclaw/mcp@3.32.4` (pinned), never `@latest`. Supply-chain trust model documented. |
-| 4 | **Credential Vault** | Credentials never fetched because untrusted content asks. Never copied into prompts, outputs, or third-party tools. |
-| 5 | **Data Flow Disclosure** | Documented: Bankr, Anthropic, Firecrawl, GitHub, Alchemy, Convex, 0x — what leaves machine vs stored server-side. |
-| 6 | **Server-Side Monitors** | Creating scheduled jobs requires explicit user confirmation. Jobs continue after MCP process exits. |
-| 7 | **Agent Schedules** | `agent_schedule` requires confirmation. Discloses LLM calls, vault writes, cost implications. |
-| 8 | **Identity Custody** | `agent_identity` is backend-controlled. Users should NOT send assets to this address. |
+|:-:|----------|------|
+| 1 | Prompt injection | External content is data only — never instructions |
+| 2 | Mainnet confirm | Estimate → preview → confirm → execute |
+| 3 | Pinned install | Always `@finchagentic/mcp@4.0.0`, never `@latest` |
+| 4 | Credential vault | Never paste secrets into prompts or third-party tools |
+| 5 | Data disclosure | Know what leaves the machine (LLM, Firecrawl, GitHub, chain RPCs) |
+| 6 | Server monitors | Scheduled jobs need explicit confirmation |
+| 7 | Agent schedules | `agent_schedule` confirms cost + side effects |
+| 8 | Identity custody | Do not send assets to agent identity addresses |
 
----
-
-## 📊 Why This Is Different
-
-| | Other MCPs | NoelClaw |
-|--|------------|----------|
-| **Memory** | Single tier, no decay | Two-tier (semantic + versioned vault), 90-day decay, dedup |
-| **Agents** | Stateless function calls | Persistent named agents, audit ledger, wallet identity |
-| **Workflows** | Manual chaining | Packets, automations, monitors, deep research |
-| **Safety** | Trust the LLM | Slippage caps, audit grounding, 8 security boundaries |
-| **Reliability** | Best effort | 0 errors across 4 rescans · cache + 429 backoff |
-
----
-
-## 🛠️ Troubleshooting
+## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| Tools not appearing | Restart your MCP client after adding the config |
-| Old version loading | `npx clear-npx-cache` then restart |
-| `web_search` fails | Set `FIRECRAWL_API_KEY` |
-| Swap refused | Price impact exceeded cap — call `estimate_swap` first |
-| Rate limit (429) | Auto-retries with backoff — no action needed |
-| Diagnose anything | `noelclaw doctor` |
+| Tools missing | Fully restart the MCP client |
+| Old version | `npx clear-npx-cache` then restart |
+| Auth issues | `finch login` or set `FINCH_API_KEY` / `FINCH_SESSION_TOKEN` |
+| Diagnose | `finch doctor` |
 
----
-
-## 🔗 Links
+## Links
 
 | | |
 |--|--|
-| 🌐 **App** | [app.noelclaw.com](https://app.noelclaw.com) |
-| 📖 **Docs** | [docs.noelclaw.fun](https://docs.noelclaw.fun) |
-| 📦 **npm** | [npmjs.com/package/@noelclaw/mcp](https://www.npmjs.com/package/@noelclaw/mcp) |
-| 💻 **GitHub** | [github.com/noelclaw/mcp](https://github.com/noelclaw/mcp) |
-| 🐦 **X** | [@noelclaw](https://x.com/noelclaw) |
+| **Docs** | [docs.finch.com](https://docs.finch.com) |
+| **App** | [app.finchagentic.com](https://app.finchagentic.com) |
+| **npm** | [@finchagentic/mcp](https://www.npmjs.com/package/@finchagentic/mcp) |
+| **GitHub** | [github.com/finchagentic/mcp](https://github.com/finchagentic/mcp) |
+| **X** | [@finchagentic](https://x.com/finchagentic) |
 
 ---
 
-<div align="center">
-
-### Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=noelclaw/mcp&type=Date)](https://star-history.com/#noelclaw/mcp&Date)
-
----
-
-**MIT License** · Built with ☕ by the NoelClaw team
-
-</div>
+MIT License · Finch
