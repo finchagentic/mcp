@@ -3,7 +3,7 @@ import { callLLM, type ChatMessage } from "./llm.js";
 import { callConvex } from "./convex.js";
 
 const SYSTEM_PROMPT = [
-  `You are Noelclaw, the runtime layer for Agentic AI - with ${ALL_TOOLS.length} tools spanning memory, vault, deep research, persistent agents, code, automations, DeFi, and GitHub.`,
+  `You are Finch, the runtime layer for Agentic AI - with ${ALL_TOOLS.length} tools spanning memory, vault, deep research, persistent agents, code, automations, DeFi, and GitHub.`,
   "Be direct and concise. Pick the right tool - don't narrate the choice. Summarize tool results in plain English.",
   "",
   "CRITICAL - on-chain / financial actions (swap, send, transfer, buy, sell, bridge, lend, deposit, withdraw, balance):",
@@ -11,11 +11,16 @@ const SYSTEM_PROMPT = [
   "- Tx hash and basescan/explorer URL from the tool output are MANDATORY in your reply - show them verbatim, do not omit or paraphrase.",
   "- NEVER fabricate a post-transaction balance with arithmetic. If user wants the new balance, call the balance tool again - do not compute it from a prior balance + amount.",
   "- For ALL Base chain operations, you MUST use the base_mcp_* family: base_mcp_swap (NOT swap_tokens), base_mcp_send (NOT send_token), base_mcp_balance (NOT get_portfolio), base_mcp_estimate, base_mcp_resolve, base_mcp_lend, base_mcp_status. This is non-negotiable - Base operations go through the Base MCP skill, period.",
+  "- For Robinhood Chain tokenized stocks (chainId 4663, NVDA/AAPL/etc on Uniswap V4), you MUST use rh_mcp_*: rh_mcp_status, rh_mcp_list_stocks, rh_mcp_balance, rh_mcp_estimate, rh_mcp_swap. Never use base_mcp_* or 0x for RH stocks. rh_mcp_swap requires confirm:true. Explorer = robinhoodchain.blockscout.com. This is NOT Robinhood Agentic brokerage (agent.robinhood.com).",
   "- Do NOT claim an address belongs to the user (e.g. 'your own address') unless you have verified ownership. Resolving a basename returns whoever owns that name - usually NOT the caller.",
+  "- The Finch wallet is the SAME address on both Base and Robinhood Chain, but they are separate ledgers - a balance on one tells you nothing about the other. If the user asks a chain-unspecified question ('what's my balance', 'do I have any funds') call BOTH base_mcp_balance AND rh_mcp_balance before answering. Never report only one chain's result as 'your balance' or 'your wallet is empty' - say which chain(s) you checked, and give both figures.",
   "",
   "For deep research: prefer deep_research (multi-stage, saves to vault). Use continueFrom when extending prior reports.",
   "For live web info: use web_search. For market questions: use get_market_data or market_thesis.",
   "Save substantive findings to vault; do not save thin or empty outputs.",
+  "",
+  "NEVER call ask_finch from this shell. It exists for MCP clients that have no reasoning model of their own - you already are one. Calling it mid-task means asking a second model to think for you, which produces nothing you couldn't write yourself from the data you already have, and repeating it when unsatisfied just burns turns. If a tool's result already answers the question, write the answer yourself.",
+  "Do not call the same tool with the same or near-identical arguments more than once in a single answer. If deep_research, a search, or an analysis tool already returned data, synthesize from that - do not re-run it hoping for a different result, and do not chain more tool calls than the question actually needs. Stop calling tools and answer as soon as you have enough to answer well.",
 ].join("\n");
 
 export type AgentResult = {
@@ -28,15 +33,23 @@ export async function runAgent(
   history: ChatMessage[],
   onToolCall: (name: string) => void,
 ): Promise<AgentResult> {
+  const provider     = process.env.FINCH_PROVIDER?.toLowerCase().trim();
   const bankrKey     = process.env.BANKR_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const openaiKey    = process.env.OPENAI_API_KEY;
 
+  // Explicit override - lets FINCH_PROVIDER=openai win even when BANKR_API_KEY
+  // is also set (e.g. as a persistent shell env var), same as llm.ts's callLLM.
+  if (provider === "bankr" && bankrKey)         return runBankrLoop(bankrKey, userMessage, history, onToolCall);
+  if (provider === "anthropic" && anthropicKey) return runAnthropicLoop(anthropicKey, userMessage, history, onToolCall);
+  if (provider === "openai" && openaiKey)       return runOpenAILoop(openaiKey, userMessage, history, onToolCall);
+
+  // Auto-priority
   if (bankrKey)     return runBankrLoop(bankrKey, userMessage, history, onToolCall);
   if (anthropicKey) return runAnthropicLoop(anthropicKey, userMessage, history, onToolCall);
   if (openaiKey)    return runOpenAILoop(openaiKey, userMessage, history, onToolCall);
 
-  // No direct key - proxy through Noelclaw backend. Wallet auto-creates at ~/.noelclaw/wallet.json
+  // No direct key - proxy through Finch backend. Wallet auto-creates at ~/.finch/wallet.json
   // on first use and signs requests transparently. No account or config needed.
   try {
     return await runConvexProxiedLoop(userMessage, history, onToolCall);
@@ -63,7 +76,7 @@ async function runAnthropicLoop(
   history: ChatMessage[],
   onToolCall: (name: string) => void,
 ): Promise<AgentResult> {
-  const model = process.env.NOELCLAW_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+  const model = process.env.FINCH_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
   const tools = ALL_TOOLS.map(toAnthropicTool);
   const toolCalls: Array<{ name: string }> = [];
 
@@ -80,7 +93,7 @@ async function runAnthropicLoop(
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify({ model, max_tokens: 2048, system: SYSTEM_PROMPT, tools, messages }),
+      body: JSON.stringify({ model, max_tokens: 4096, system: SYSTEM_PROMPT, tools, messages }),
       signal: AbortSignal.timeout(90_000),
     });
 
@@ -124,7 +137,47 @@ async function runAnthropicLoop(
     messages.push({ role: "user", content: toolResults });
   }
 
-  return { text: "Reached max tool iterations.", toolCalls };
+  // Hit the turn cap without a final answer - rather than hand back nothing,
+  // force one more call with no tools available so the model has to
+  // synthesize a real answer from whatever it already gathered.
+  return finishWithoutTools(
+    async (msgs) => {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model, max_tokens: 4096, system: SYSTEM_PROMPT, messages: msgs }),
+        signal: AbortSignal.timeout(90_000),
+      });
+      if (!res.ok) return "";
+      const data = await res.json() as any;
+      return ((data.content as any[]) ?? []).filter(b => b.type === "text").map(b => b.text).join("");
+    },
+    messages,
+    toolCalls,
+  );
+}
+
+// Shared turn-cap fallback: rather than "Reached max tool iterations." with
+// nothing useful, ask the model to synthesize a real answer from whatever
+// conversation history (including every tool result so far) it already has,
+// with no tools offered so it can't keep deferring.
+async function finishWithoutTools(
+  call: (messages: any[]) => Promise<string>,
+  messages: any[],
+  toolCalls: Array<{ name: string }>,
+): Promise<AgentResult> {
+  try {
+    const closingMessages = [
+      ...messages,
+      { role: "user", content: "Stop calling tools. Summarize what you found above into a direct answer for the user right now." },
+    ];
+    const text = await call(closingMessages);
+    if (text.trim()) return { text, toolCalls };
+  } catch { /* fall through to the honest failure message below */ }
+  return {
+    text: "I gathered some information but ran out of turns before finishing the analysis. Try a narrower question, or ask me to continue from what I found.",
+    toolCalls,
+  };
 }
 
 // ── Convex-proxied Anthropic loop (session token only - platform covers LLM) ──
@@ -134,7 +187,7 @@ async function runConvexProxiedLoop(
   history: ChatMessage[],
   onToolCall: (name: string) => void,
 ): Promise<AgentResult> {
-  const model = process.env.NOELCLAW_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+  const model = process.env.FINCH_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
   const tools = ALL_TOOLS.map(toAnthropicTool);
   const toolCalls: Array<{ name: string }> = [];
 
@@ -147,7 +200,7 @@ async function runConvexProxiedLoop(
     // callConvex handles wallet/session auth automatically; 90s timeout matches the proxy endpoint
     const data = await callConvex("/llm/complete", "POST", {
       model,
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: SYSTEM_PROMPT,
       tools,
       messages,
@@ -186,7 +239,16 @@ async function runConvexProxiedLoop(
     messages.push({ role: "user", content: toolResults });
   }
 
-  return { text: "Reached max tool iterations.", toolCalls };
+  return finishWithoutTools(
+    async (msgs) => {
+      const data = await callConvex("/llm/complete", "POST", {
+        model, max_tokens: 4096, system: SYSTEM_PROMPT, messages: msgs,
+      }, "llm_complete", 90_000);
+      return ((data.content as any[]) ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    },
+    messages,
+    toolCalls,
+  );
 }
 
 // ── Bankr (OpenAI-compatible) agent loop ─────────────────────────────────────
@@ -227,7 +289,7 @@ async function runOpenAICompatibleLoop(
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify({ model, messages, tools, max_tokens: 2048 }),
+      body: JSON.stringify({ model, messages, tools, max_tokens: 4096 }),
       signal: AbortSignal.timeout(90_000),
     });
 
@@ -265,7 +327,21 @@ async function runOpenAICompatibleLoop(
     }
   }
 
-  return { text: "Reached max tool iterations.", toolCalls };
+  return finishWithoutTools(
+    async (msgs) => {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ model, messages: msgs, max_tokens: 4096 }),
+        signal: AbortSignal.timeout(90_000),
+      });
+      if (!res.ok) return "";
+      const data = await res.json() as any;
+      return data.choices?.[0]?.message?.content ?? "";
+    },
+    messages,
+    toolCalls,
+  );
 }
 
 async function runBankrLoop(
@@ -274,7 +350,7 @@ async function runBankrLoop(
   history: ChatMessage[],
   onToolCall: (name: string) => void,
 ): Promise<AgentResult> {
-  const model = process.env.NOELCLAW_MODEL ?? process.env.BANKR_MODEL ?? "claude-haiku-4-5-20251001";
+  const model = process.env.FINCH_MODEL ?? process.env.BANKR_MODEL ?? "claude-haiku-4-5-20251001";
   return runOpenAICompatibleLoop(
     "https://llm.bankr.bot/v1/chat/completions",
     { "X-API-Key": apiKey },
@@ -299,7 +375,7 @@ async function runOpenAILoop(
   history: ChatMessage[],
   onToolCall: (name: string) => void,
 ): Promise<AgentResult> {
-  const model = process.env.NOELCLAW_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+  const model = process.env.FINCH_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
   return runOpenAICompatibleLoop(
     openAiChatUrl(),
     { Authorization: `Bearer ${apiKey}` },
