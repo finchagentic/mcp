@@ -78,8 +78,8 @@ export function warnIfNoPassphrase(): void {
   _passphraseWarned = true;
   // stderr only - stdout is reserved for MCP JSON-RPC framing when running as a server.
   process.stderr.write(
-    "\n⚠️  FINCH_WALLET_PASSPHRASE is not set. Your Base mainnet wallet " +
-    `(${WALLET_FILE}) is encrypted with a key derived only from this machine's ` +
+    "\n⚠️  FINCH_WALLET_PASSPHRASE is not set. Your local wallet " +
+    `(${WALLET_FILE}, used on both Base and Robinhood Chain) is encrypted with a key derived only from this machine's ` +
     "hostname/platform/arch - low entropy, and crackable by anyone who copies the " +
     "file (backup sync, stolen disk, malware). Set FINCH_WALLET_PASSPHRASE to a " +
     "strong secret for real protection. This wallet holds real funds.\n\n"
