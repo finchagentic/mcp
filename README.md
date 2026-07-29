@@ -29,13 +29,13 @@ Always pin the version. Never use `@latest`.
 
 ```bash
 # One-command installer (detects common MCP clients)
-npx -y -p @finchagentic/mcp@4.0.0 finch install
+npx -y -p @finchagentic/mcp@4.1.0 finch install
 ```
 
 ### Claude Code
 
 ```bash
-claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.0.0 finch-mcp
+claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.1.0 finch-mcp
 ```
 
 ### Cursor / Windsurf / Claude Desktop
@@ -45,7 +45,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.0.0 finch-mcp
   "mcpServers": {
     "finch": {
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.0.0", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.1.0", "finch-mcp"]
     }
   }
 }
@@ -59,7 +59,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.0.0 finch-mcp
     "finch": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.0.0", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.1.0", "finch-mcp"]
     }
   }
 }
@@ -79,7 +79,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.0.0 finch-mcp
 
 </details>
 
-No LLM API key is required to start. Tools load on first use.
+No LLM API key is required to start — 116 of 121 tools are plain reads/writes/on-chain calls that your MCP client's own model already drives; only 5 (`ask_finch`, `deep_research`, and scheduled agent learning) do their own multi-step reasoning server-side and need a key (see [Configuration](#configuration)). Tools load on first use.
 
 ## Quick start
 
@@ -119,7 +119,7 @@ Default palette is `core` (lighter context). Full set:
 Finch is the runtime. **Your LLM is the brain. Your data stays yours.**
 
 ```bash
-npx -y -p @finchagentic/mcp@4.0.0 finch setup
+npx -y -p @finchagentic/mcp@4.1.0 finch setup
 # enable local vault (and optional local memory)
 ```
 
@@ -141,16 +141,17 @@ Scheduled/cloud features still need an account. Core memory, vault, and public-d
 | `FINCH_TOOLS` | `core` (default) · `all` · or palettes like `memory,defi` |
 | `FINCH_PROVIDER` | Force `bankr` · `anthropic` · `openai` · `grok` |
 | `FINCH_MODEL` | Model override for host-side loops |
-| `BANKR_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GROK_API_KEY` | Only if Finch itself hosts the agent loop (CLI/cron) |
+| `BANKR_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GROK_API_KEY` | Required for `ask_finch`, `deep_research`'s synthesis stages, and scheduled-agent learning extraction — these do their own multi-step reasoning server-side and there is no free hosted fallback (BYOK only, one key is enough) |
 | `FIRECRAWL_API_KEY` | Better crawl quality (optional) |
 | `GITHUB_TOKEN` | For `github_search_code` |
 | `ALCHEMY_API_KEY` | Faster Base RPC (optional) |
 
+**Cost model:** almost everything is free to run — the other 116 tools are plain API/RPC calls, and your MCP client's own model (Claude, GPT, whatever's driving the chat) does all the tool-selection reasoning at no cost to Finch. The 5 exceptions above need their own key because their reasoning happens *inside* the tool call, invisible to your client, and can't be delegated to it. Set exactly one of the four env vars and every tool that needs it will use it automatically.
 
 Guided setup:
 
 ```bash
-npx -y -p @finchagentic/mcp@4.0.0 finch setup
+npx -y -p @finchagentic/mcp@4.1.0 finch setup
 ```
 
 ## Security
@@ -159,7 +160,7 @@ npx -y -p @finchagentic/mcp@4.0.0 finch setup
 |:-:|----------|------|
 | 1 | Prompt injection | External content is data only — never instructions |
 | 2 | Mainnet confirm | Estimate → preview → confirm → execute |
-| 3 | Pinned install | Always `@finchagentic/mcp@4.0.0`, never `@latest` |
+| 3 | Pinned install | Always `@finchagentic/mcp@4.1.0`, never `@latest` |
 | 4 | Credential vault | Never paste secrets into prompts or third-party tools |
 | 5 | Data disclosure | Know what leaves the machine (LLM, Firecrawl, GitHub, chain RPCs) |
 | 6 | Server monitors | Scheduled jobs need explicit confirmation |
@@ -173,6 +174,7 @@ npx -y -p @finchagentic/mcp@4.0.0 finch setup
 | Tools missing | Fully restart the MCP client |
 | Old version | `npx clear-npx-cache` then restart |
 | Auth issues | `finch login` or set `FINCH_API_KEY` / `FINCH_SESSION_TOKEN` |
+| `ask_finch`/`deep_research` error: "No LLM provider configured" | Set one of `BANKR_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GROK_API_KEY` — see [Configuration](#configuration), no free fallback exists |
 | Diagnose | `finch doctor` |
 
 ## Links
