@@ -1,7 +1,7 @@
 import { signRequest } from "./wallet.js";
 import { getSavedToken } from "./config.js";
 
-const CONVEX_SITE = process.env.NOELCLAW_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
+export const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
 const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 const RETRY_DELAYS = [500, 1000, 2000];
 
@@ -31,7 +31,7 @@ export async function callConvex(path: string, method: string, body?: unknown, t
   const url = `${CONVEX_SITE}${path}`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
-  const apiKey      = process.env.NOELCLAW_API_KEY;
+  const apiKey      = process.env.FINCH_API_KEY;
   const sessionToken = getSavedToken(); // env var → saved config fallback
   // Prefer session token (resolved by backend) over API key for Convex API calls
   const authHeader  = sessionToken
@@ -52,7 +52,7 @@ export async function callConvex(path: string, method: string, body?: unknown, t
     }
   }
 
-  const paymentHeader = process.env.NOELCLAW_PAYMENT_HEADER;
+  const paymentHeader = process.env.FINCH_PAYMENT_HEADER;
   if (paymentHeader) headers["X-Payment"] = paymentHeader;
 
   // BYOK headers - user pays for their own AI/service costs
@@ -87,18 +87,24 @@ export async function callConvex(path: string, method: string, body?: unknown, t
       };
       throw new Error(
         `🔑 ${b.message || "Authentication required"}\n\n` +
-        `→ Sign in at: ${b.url || "https://noelclaw.com"}\n\n` +
-        `Hint: ${b.hint || 'Add NOELCLAW_SESSION_TOKEN=noel_... to the env block in your MCP config'}\n\n` +
+        `→ Sign in at: ${b.url || "https://finchagentic.com"}\n\n` +
+        `Hint: ${b.hint || 'Add FINCH_SESSION_TOKEN=… to the env block in your MCP config'}\n\n` +
         `${b.alternative ? `Alternative: ${b.alternative}` : ""}`
       );
     }
 
     if (RETRY_STATUSES.has(res.status) && attempt < RETRY_DELAYS.length) {
-      lastError = new Error(`Noelclaw API error: ${res.status}`);
+      // Capture the actual body so a deterministic error (e.g. "unknown
+      // token") that happens to come back on a 500 still surfaces its real
+      // message if retries exhaust - previously this discarded the body
+      // entirely and threw a bare "Finch API error: 500", hiding exactly the
+      // information the caller needed to fix the request.
+      const bodyText = await res.text().catch(() => "");
+      lastError = new Error(`Finch API error ${res.status}: ${bodyText.slice(0, 300) || "(no body)"}`);
       continue;
     }
 
-    if (!res.ok) throw new Error(`Noelclaw API error: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(`Finch API error: ${res.status} ${await res.text()}`);
     return res.json() as Promise<any>;
   }
 
@@ -112,7 +118,7 @@ export async function callConvexRaw(path: string, toolName = "unknown", timeoutM
   const url = `${CONVEX_SITE}${path}`;
   const headers: Record<string, string> = {};
 
-  const apiKey       = process.env.NOELCLAW_API_KEY;
+  const apiKey       = process.env.FINCH_API_KEY;
   const sessionToken = getSavedToken();
   const authHeader   = apiKey
     ? `Bearer ${apiKey}`
@@ -138,7 +144,7 @@ export async function callConvexRaw(path: string, toolName = "unknown", timeoutM
     headers,
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`Noelclaw API error: ${res.status}`);
+  if (!res.ok) throw new Error(`Finch API error: ${res.status}`);
   return res.text();
 }
 

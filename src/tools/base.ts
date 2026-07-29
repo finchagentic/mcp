@@ -4,6 +4,24 @@ import { ToolResult } from "../types.js";
 const MORPHO_API  = "https://blue-api.morpho.org/graphql";
 const MOONWELL_API = "https://api.moonwell.fi/v1/markets";
 
+/** Morpho's public API occasionally 403s transiently (rate-limit/WAF blip,
+ * confirmed by hand: identical requests succeed moments later) - one retry
+ * after a short delay clears most of these without adding real latency to
+ * the common case. */
+async function fetchMorphoGql(query: string): Promise<any> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 800));
+    const res = await fetch(MORPHO_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) return res.json();
+    if (attempt === 1) throw new Error(`Morpho API error: ${res.status} (after retry)`);
+  }
+}
+
 export const BASE_TOOLS: Tool[] = [
   {
     name: "base_mcp_yield_vaults",
@@ -106,15 +124,7 @@ async function fetchMorphoVaults(asset?: string, limit = 10): Promise<string> {
     }
   }`;
 
-  const res = await fetch(MORPHO_API, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: gql }),
-    signal: AbortSignal.timeout(15000),
-  });
-
-  if (!res.ok) throw new Error(`Morpho API error: ${res.status}`);
-  const data = await res.json() as any;
+  const data = await fetchMorphoGql(gql);
   let vaults: any[] = data?.data?.vaults?.items ?? [];
 
   // Filter out test/spam vaults: min $10k TVL, max 500% APY
@@ -230,15 +240,7 @@ async function prepareDeposit(vaultName: string | undefined, asset: string, amou
     }
   }`;
 
-  const res = await fetch(MORPHO_API, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: gql }),
-    signal: AbortSignal.timeout(15000),
-  });
-
-  if (!res.ok) throw new Error(`Morpho API error: ${res.status}`);
-  const data = await res.json() as any;
+  const data = await fetchMorphoGql(gql);
   let vaults: any[] = data?.data?.vaults?.items ?? [];
 
   // Filter by asset first
