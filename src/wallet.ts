@@ -33,10 +33,31 @@ let _cachedWallet: ethers.Wallet | ethers.HDNodeWallet | null = null;
 export function clearWalletCache(): void { _cachedWallet = null; }
 
 export function getMachineKey(): string {
-  // If a passphrase is set, use it as the primary secret for stronger encryption.
-  // Without it, the key is derived from public machine info only - this is
-  // convenience encryption (prevents casual reads), not security against
-  // an attacker who has read access to both the file and system info.
+  // A passphrase is meant to make the wallet portable (move the encrypted
+  // file + set the same passphrase elsewhere and it still decrypts) - so when
+  // one is set, derive the key from ONLY the passphrase, no machine binding.
+  // Without a passphrase, fall back to machine info as convenience-only
+  // encryption (prevents casual reads, not security against an attacker who
+  // has both the file and the system info).
+  const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
+  if (passphrase) {
+    return crypto.createHash("sha256").update(passphrase).digest("hex").slice(0, 32);
+  }
+  return crypto
+    .createHash("sha256")
+    .update(os.hostname() + os.platform() + os.arch())
+    .digest("hex")
+    .slice(0, 32);
+}
+
+/**
+ * Pre-fix key derivation: always folded in machine info even when a
+ * passphrase was set, so a wallet encrypted before this fix can only ever be
+ * decrypted on the exact machine that created it - never portable. Kept
+ * solely so those existing wallets still open; getOrCreateWallet migrates
+ * them to the portable scheme in place on first successful decrypt.
+ */
+function getLegacyMachineKey(): string {
   const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
   return crypto
     .createHash("sha256")
@@ -68,20 +89,43 @@ export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNode
       const wallet = await ethers.Wallet.fromEncryptedJson(encrypted, getMachineKey());
       _cachedWallet = wallet;
       return wallet;
-    } catch (err: any) {
-      // A wallet file already exists but couldn't be decrypted - this almost
-      // always means FINCH_WALLET_PASSPHRASE (or the machine info the key
-      // is derived from) doesn't match what encrypted it. Silently creating
-      // a fresh wallet here would overwrite the existing encrypted file,
-      // orphaning it and any funds it controls. Refuse instead.
-      throw new Error(
-        `Could not decrypt existing wallet at ${WALLET_FILE}: ${err?.message ?? "unknown error"}\n\n` +
-        `This usually means FINCH_WALLET_PASSPHRASE doesn't match the passphrase ` +
-        `used when this wallet was encrypted (or this is a different machine). ` +
-        `Refusing to auto-create a replacement wallet, since that would silently ` +
-        `orphan the existing one and any funds it holds.\n\n` +
-        `If you're sure this wallet should be abandoned, move or delete ${WALLET_FILE} manually first.`
-      );
+    } catch (currentErr: any) {
+      // Fall back to the pre-fix machine-bound scheme, for wallets encrypted
+      // before passphrases became portable. Only relevant on the ORIGINAL
+      // machine (it still needs that machine's hostname/platform/arch) - it
+      // can't rescue a wallet file copied to a new machine from before this
+      // fix; there was no passphrase-only secret saved anywhere to recover.
+      try {
+        const wallet = await ethers.Wallet.fromEncryptedJson(encrypted, getLegacyMachineKey());
+        _cachedWallet = wallet;
+        // Migrate in place to the portable scheme now that we've proven we
+        // hold the right key, so this only ever needs to happen once.
+        try {
+          const migrated = await wallet.encrypt(getMachineKey());
+          fs.writeFileSync(WALLET_FILE, migrated, { mode: 0o600 });
+          process.stderr.write(`\nMigrated ${WALLET_FILE} to the portable passphrase scheme.\n\n`);
+        } catch {
+          /* migration is best-effort - the legacy key still works next run either way */
+        }
+        return wallet;
+      } catch {
+        // A wallet file already exists but couldn't be decrypted under either
+        // scheme - this almost always means FINCH_WALLET_PASSPHRASE doesn't
+        // match what encrypted it, or this is a different machine and no
+        // passphrase was ever set. Silently creating a fresh wallet here
+        // would overwrite the existing encrypted file, orphaning it and any
+        // funds it controls. Refuse instead.
+        throw new Error(
+          `Could not decrypt existing wallet at ${WALLET_FILE}: ${currentErr?.message ?? "unknown error"}\n\n` +
+          `This usually means FINCH_WALLET_PASSPHRASE doesn't match the passphrase ` +
+          `used when this wallet was encrypted, or this file was copied from a ` +
+          `different machine and no passphrase was set when it was created (in ` +
+          `which case the key was machine-bound and cannot be recovered elsewhere). ` +
+          `Refusing to auto-create a replacement wallet, since that would silently ` +
+          `orphan the existing one and any funds it holds.\n\n` +
+          `If you're sure this wallet should be abandoned, move or delete ${WALLET_FILE} manually first.`
+        );
+      }
     }
   }
   const wallet = ethers.Wallet.createRandom();
