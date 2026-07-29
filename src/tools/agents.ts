@@ -42,12 +42,12 @@ async function extractLearning(
   priorLearnings: string[],
   latest: { progress: string; findings?: string; status?: string },
 ): Promise<string | null> {
-  // Fast skip when no LLM key is configured. Without a key, callLLM falls
-  // through to the noelclaw-proxy path which may also be unconfigured for
-  // this user - every agent_update would otherwise pay an 8s timeout for
-  // nothing. Cheap, correct, and keeps update latency low.
+  // Fast skip when no LLM key is configured - callLLM() now throws
+  // immediately rather than proxying through Finch (BYOK is required), and
+  // the catch below swallows that into a silent skip. This early return just
+  // avoids building the prompt for a call we already know will fail.
   const hasLLM = !!(process.env.BANKR_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.GROK_API_KEY);
-  if (!hasLLM && !process.env.NOELCLAW_SESSION_TOKEN) {
+  if (!hasLLM && !process.env.FINCH_SESSION_TOKEN) {
     return null;
   }
 
@@ -117,7 +117,12 @@ export const AGENT_TOOLS: Tool[] = [
   },
   {
     name: "hire_agent",
-    description: "Hire a specialist agent to complete a task. The agent runs immediately with its own expertise and returns a focused analysis or execution plan. Use list_agents first to see what's available.",
+    description:
+      "Load a specialist agent's expertise and apply it to a task YOURSELF — the tool returns the agent's " +
+      "full persona (its framework, thresholds and house rules) scoped to your task, and you answer in that " +
+      "voice. Built-in: analyst, risk-manager, researcher, executor, scout; use list_agents for the rest. " +
+      "No API key needed. Pass `execute: true` only when you need the agent's own model to answer instead " +
+      "(costs a server-side LLM call and you cannot steer the reasoning).",
     inputSchema: {
       type: "object",
       properties: {
@@ -129,9 +134,13 @@ export const AGENT_TOOLS: Tool[] = [
           type: "string",
           description: "The task or question for the agent. Be specific - better input = better output.",
         },
+        execute: {
+          type: "boolean",
+          description: "Run the agent server-side instead of returning its persona for you to apply. Default false. Requires a server LLM key.",
+        },
         maxTokens: {
           type: "number",
-          description: "Max response tokens (default 800, max 1200). Lower is faster and cheaper.",
+          description: "execute:true only. Max response tokens (default 800, max 1200).",
         },
       },
       required: ["agentId", "task"],
@@ -158,7 +167,7 @@ export const AGENT_TOOLS: Tool[] = [
   {
     name: "agent_recall",
     description:
-      "Recall a persistent agent by name - loads its goal, current progress, findings, full history, and 🧠 accumulated learnings (patterns the agent extracted from past runs). " +
+      "Recall a persistent agent by name - loads its goal, current progress, findings, full history, and accumulated learnings (patterns the agent extracted from past runs). " +
       "Use this to resume a long-running task, check what an agent last did, or hand context to a fresh LLM session. " +
       "Learnings compound over time - the more an agent runs, the smarter recall becomes.",
     inputSchema: {
@@ -303,6 +312,7 @@ export const AGENT_TOOLS: Tool[] = [
 const HireAgentSchema = z.object({
   agentId:   z.string().min(1),
   task:      z.string().min(1),
+  execute:   z.boolean().optional(),
   maxTokens: z.number().int().min(100).max(1200).optional(),
 });
 const SpawnAgentSchema = z.object({
@@ -318,6 +328,50 @@ const UpdateAgentSchema = z.object({
   status:   z.enum(["active", "blocked", "complete"]).optional(),
   nextStep: z.string().optional(),
 });
+
+// ── Structured output builders (schemas in output-schemas.ts) ───────────────
+export function buildAgentList(agents: any[]): Record<string, unknown> {
+  return {
+    count: agents.length,
+    agents: agents.map((a) => ({
+      id: a.id,
+      name: a.name,
+      description: a.description ?? null,
+      category: a.category ?? null,
+      pricingType: a.pricingType ?? null,
+      runs: a.runs ?? null,
+    })),
+  };
+}
+
+export function buildAgentLedger(name: string, versions: any[]): Record<string, unknown> {
+  return {
+    name,
+    count: versions.length,
+    versions: versions.map((v) => ({
+      version: v.version,
+      commitMsg: v.commitMsg ?? null,
+      createdAt: v.createdAt ?? null,
+    })),
+  };
+}
+
+export function buildAgentRuns(name: string, runs: any[]): Record<string, unknown> {
+  return {
+    name,
+    count: runs.length,
+    runs: runs.map((r) => ({
+      startedAt: r.startedAt ?? null,
+      endedAt: r.endedAt ?? null,
+      status: r.status ?? null,
+      workflow: r.workflow ?? null,
+      durationMs: r.durationMs ?? null,
+      toolCallCount: r.toolCallCount ?? null,
+      resultSummary: r.resultSummary ?? null,
+      errorMsg: r.errorMsg ?? null,
+    })),
+  };
+}
 
 export async function handleAgentTool(name: string, args: unknown): Promise<ToolResult | null> {
   if (name === "list_agents") {
@@ -337,6 +391,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
         type: "text",
         text: `## Available Agents (${agents.length})\n\n${lines.join("\n\n")}`,
       }],
+      structuredContent: buildAgentList(agents),
     };
   }
 
@@ -349,20 +404,64 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
       };
     }
 
-    const { agentId, task, maxTokens } = parsed.data;
-    const data = await callConvex("/agents/hire", "POST", { agentId, task, maxTokens }, "hire_agent") as {
-      agent?: string; task?: string; result?: string; tokensUsed?: number; error?: string;
+    const { agentId, task, maxTokens, execute = false } = parsed.data;
+    const data = await callConvex(
+      "/agents/hire",
+      "POST",
+      { agentId, task, maxTokens, mode: execute ? "run" : "brief" },
+      "hire_agent",
+    ) as {
+      agent?: string; task?: string; result?: string; systemPrompt?: string; tokensUsed?: number; error?: string;
     };
 
     if (data.error) {
       return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
     }
 
-    const footer = data.tokensUsed ? `\n\n*Tokens used: ${data.tokensUsed}*` : "";
+    if (execute) {
+      const footer = data.tokensUsed ? `\n\n*Tokens used: ${data.tokensUsed}*` : "";
+      return {
+        content: [{
+          type: "text",
+          text: `## ${data.agent ?? agentId} - Response\n\n${data.result}${footer}`,
+        }],
+      };
+    }
+
+    // The registry lookup is the tool's real work - it holds each agent's
+    // persona, thresholds and hard rules. Applying them is model work, and the
+    // caller's model is the better one *and* the one the user can redirect.
+    if (!data.systemPrompt) {
+      return {
+        content: [{
+          type: "text",
+          text: `Agent \`${agentId}\` returned no persona. The backend may predate brief mode — retry with \`execute: true\`.`,
+        }],
+        isError: true,
+      };
+    }
+
     return {
       content: [{
         type: "text",
-        text: `## ${data.agent ?? agentId} - Response\n\n${data.result}${footer}`,
+        text: [
+          `## Adopt: ${data.agent ?? agentId}`,
+          ``,
+          `You are now this specialist. Answer the task below **in this persona**, applying its framework, ` +
+            `thresholds and hard rules exactly as written — including the ones that tell you to refuse, ` +
+            `skip or downgrade a setup. Those gates are the reason the persona exists; do not soften them ` +
+            `to give a more agreeable answer.`,
+          ``,
+          `---`,
+          ``,
+          data.systemPrompt,
+          ``,
+          `---`,
+          ``,
+          `### Task`,
+          ``,
+          task,
+        ].join("\n"),
       }],
     };
   }
@@ -523,7 +622,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
 
     const versions = data.history ?? [];
     if (!versions.length) {
-      return { content: [{ type: "text", text: `No ledger entries found for agent \`${agentName}\`. Spawn it first with \`agent_spawn\`.` }] };
+      return { content: [{ type: "text", text: `No ledger entries found for agent \`${agentName}\`. Spawn it first with \`agent_spawn\`.` }], structuredContent: buildAgentLedger(agentName, []) };
     }
 
     const rows = versions.map((v) => {
@@ -537,6 +636,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
         type: "text",
         text: `## Agent Ledger: ${agentName} (${versions.length} entries)\n\n${rows.join("\n\n")}`,
       }],
+      structuredContent: buildAgentLedger(agentName, versions),
     };
   }
 
@@ -569,7 +669,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
 
     // Generate new wallet address for the agent
     const wallet = ethers.Wallet.createRandom();
-    const data = await callConvex("/agents/identity", "POST", {
+    await callConvex("/agents/identity", "POST", {
       agentId,
       walletAddress: wallet.address,
       agentName: agentName ?? agentId,
@@ -585,7 +685,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
           `**Network:** Base mainnet`,
           ``,
           `This identity is now permanently linked to \`${agentId}\`.`,
-          `Visible in the Agents page of your Noelclaw app.`,
+          `Visible in the Agents page of your Finch app.`,
         ].join("\n"),
       }],
     };
@@ -682,7 +782,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
       durationMs?: number; toolCallCount?: number; workflow: string;
     }>;
     if (!runs.length) {
-      return { content: [{ type: "text", text: `No autonomous runs yet for \`${a.name}\`. The agent runs on its cron schedule - be patient.` }] };
+      return { content: [{ type: "text", text: `No autonomous runs yet for \`${a.name}\`. The agent runs on its cron schedule - be patient.` }], structuredContent: buildAgentRuns(a.name, []) };
     }
     const lines = [`## Recent runs for \`${a.name}\` (${runs.length})`, ""];
     for (const r of runs) {
@@ -695,7 +795,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
       if (r.errorMsg) lines.push(`   ⚠️ ${r.errorMsg.slice(0, 200)}`);
       lines.push("");
     }
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildAgentRuns(a.name, runs) };
   }
 
   return null;

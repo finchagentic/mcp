@@ -1,11 +1,7 @@
-import { signRequest } from "./wallet.js";
-import { readConfig } from "./config.js";
-
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const BANKR_URL = "https://llm.bankr.bot/v1/chat/completions";
 const GROK_URL = "https://api.x.ai/v1/chat/completions";
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const CONVEX_SITE = process.env.NOELCLAW_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -27,7 +23,7 @@ export interface LLMOptions {
    */
   liveSearch?: LiveSearchOptions;
   /**
-   * Per-call model override. When set, takes precedence over NOELCLAW_MODEL
+   * Per-call model override. When set, takes precedence over FINCH_MODEL
    * and provider defaults. Useful when one tool (e.g. deep_research) wants a
    * Grok model via Bankr for real-time search while the rest of the stack
    * stays on Claude. Pass a Bankr-supported name like `grok-4.3` or
@@ -45,14 +41,99 @@ export interface LLMOptions {
  * True if any BYOK provider key (Bankr/Anthropic/OpenAI/Grok) is set. Callers
  * that must never fall through to callViaConvex() - e.g. local-memory mode,
  * which promises zero Convex involvement - should check this first and fail
- * clearly instead of letting callLLM() silently proxy through Noelclaw.
+ * clearly instead of letting callLLM() silently proxy through Finch.
  */
 export function hasDirectLLMKey(): boolean {
   return !!(process.env.BANKR_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GROK_API_KEY);
 }
 
+/**
+ * Grok Live Search used purely as a RETRIEVAL layer.
+ *
+ * X/news content is the one thing an MCP client genuinely cannot reach on its
+ * own, which makes fetching it real tool work. Interpreting it is not — so this
+ * asks Grok to return the found items verbatim and hands them upward as sources.
+ * The caller's model decides what any of it means.
+ *
+ * Returns [] on any failure: live search is an augmentation, never a hard
+ * dependency, and research must still work without a Grok key.
+ */
+export async function grokLiveSearchHits(
+  query: string,
+  sources: LiveSearchSource[] = ["x", "news", "web"],
+  days?: number,
+  maxResults = 10,
+): Promise<Array<{ url: string; excerpt: string }>> {
+  const apiKey = process.env.GROK_API_KEY;
+  if (!apiKey) return [];
+
+  const body: Record<string, unknown> = {
+    model: process.env.FINCH_GROK_MODEL ?? "grok-4.3",
+    max_tokens: 2000,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a retrieval tool, not an analyst. Return what you find verbatim. " +
+          "Never summarise, interpret, rank by opinion, or add commentary.",
+      },
+      {
+        role: "user",
+        content:
+          `Search for: ${query}\n\n` +
+          `Return up to ${maxResults} of the most relevant recent items, one per line, ` +
+          `in exactly this format:\n\n` +
+          `URL :: verbatim quote or post text (max 400 chars)\n\n` +
+          `Rules: quote the source's own words. Do not paraphrase. Do not add analysis, ` +
+          `conclusions, or your own framing. If an item has no URL, use "-" for the URL.`,
+      },
+    ],
+    search_parameters: {
+      mode: "on",
+      sources: sources.map((type) => ({ type })),
+      max_search_results: maxResults,
+      ...(days ? { from_date: new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10) } : {}),
+    },
+  };
+
+  try {
+    const res = await fetch(GROK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      citations?: string[];
+    };
+    const content = data.choices?.[0]?.message?.content ?? "";
+
+    const hits: Array<{ url: string; excerpt: string }> = [];
+    for (const line of content.split("\n")) {
+      const idx = line.indexOf("::");
+      if (idx === -1) continue;
+      const url = line.slice(0, idx).trim().replace(/^[-*\d.\s]+/, "");
+      const excerpt = line.slice(idx + 2).trim();
+      if (excerpt.length < 20) continue;
+      hits.push({ url: /^https?:\/\//.test(url) ? url : "", excerpt });
+    }
+
+    // If the model ignored the format, fall back to bare citations so the
+    // caller still receives the URLs rather than nothing.
+    if (hits.length === 0 && data.citations?.length) {
+      return data.citations.slice(0, maxResults).map((url) => ({ url, excerpt: "" }));
+    }
+    return hits.slice(0, maxResults);
+  } catch {
+    return [];
+  }
+}
+
 export function isGrokActive(): boolean {
-  const provider = process.env.NOELCLAW_PROVIDER?.toLowerCase().trim();
+  const provider = process.env.FINCH_PROVIDER?.toLowerCase().trim();
   if (provider === "grok") return !!process.env.GROK_API_KEY;
   if (provider === "bankr" || provider === "anthropic" || provider === "openai") return false;
   // Auto-priority - Grok is only active if it's the only key present
@@ -63,13 +144,13 @@ export function isGrokActive(): boolean {
 /**
  * Call the best available LLM.
  *
- * Provider auto-priority (when NOELCLAW_PROVIDER unset):
+ * Provider auto-priority (when FINCH_PROVIDER unset):
  *   BANKR_API_KEY → ANTHROPIC_API_KEY → OPENAI_API_KEY → GROK_API_KEY → Convex backend
  *
- * Force a provider via NOELCLAW_PROVIDER: "bankr" | "anthropic" | "openai" | "grok"
+ * Force a provider via FINCH_PROVIDER: "bankr" | "anthropic" | "openai" | "grok"
  *
  * Model selection (first wins):
- *   NOELCLAW_MODEL → {provider}_MODEL → provider default
+ *   FINCH_MODEL → {provider}_MODEL → provider default
  */
 export async function callLLM(
   systemPrompt: string,
@@ -79,7 +160,7 @@ export async function callLLM(
   timeoutMs = 60_000,
   options: LLMOptions = {},
 ): Promise<string> {
-  const provider     = process.env.NOELCLAW_PROVIDER?.toLowerCase().trim();
+  const provider     = process.env.FINCH_PROVIDER?.toLowerCase().trim();
   const bankrKey     = process.env.BANKR_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const openaiKey    = process.env.OPENAI_API_KEY;
@@ -97,57 +178,20 @@ export async function callLLM(
   if (openaiKey)    return callOpenAI(openaiKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.model);
   if (grokKey)      return callGrok(grokKey, systemPrompt, userPrompt, maxTokens, history, timeoutMs, options.liveSearch, options.model);
 
-  // Fallback: route through Convex backend - owner covers cost
-  return callViaConvex(systemPrompt, userPrompt, history, timeoutMs);
-}
-
-async function callViaConvex(
-  systemPrompt: string,
-  userPrompt: string,
-  history: ChatMessage[],
-  timeoutMs: number,
-): Promise<string> {
-  const fullQuestion = systemPrompt
-    ? `[System: ${systemPrompt}]\n\n${userPrompt}`
-    : userPrompt;
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-
-  const apiKey = process.env.NOELCLAW_API_KEY;
-  let sessionToken = process.env.NOELCLAW_SESSION_TOKEN;
-  // Read from config file — this is the resolved session token after login
-  try {
-    const cfg = readConfig();
-    if (cfg.sessionToken) sessionToken = cfg.sessionToken;
-  } catch { /* ignore */ }
-  // Prefer session token (resolved by backend) over API key for /mcp/chat
-  if (sessionToken) {
-    headers["Authorization"] = `Bearer ${sessionToken}`;
-  } else if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  } else {
-    try {
-      const { address, signature, timestamp } = await signRequest("ask_noel");
-      headers["X-Wallet-Address"] = address;
-      headers["X-Wallet-Signature"] = signature;
-      headers["X-Wallet-Timestamp"] = timestamp;
-    } catch { /* proceed without wallet auth */ }
-  }
-
-  const res = await fetch(`${CONVEX_SITE}/mcp/chat`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ question: fullQuestion, messages: history }),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`LLM error ${res.status}: ${body.slice(0, 200)}`);
-  }
-
-  const data = await res.json() as { answer?: string };
-  return data.answer ?? "";
+  // No provider key configured - BYOK is required. This tool needs its own
+  // multi-step reasoning (planning, synthesis, critique) that an MCP host's
+  // model cannot do on the tool's behalf, so there is no free path: bring
+  // your own key or don't use tools that need one (ask_finch, deep_research,
+  // market_thesis, trade_plan, scheduled agent runs). Fails clearly instead
+  // of silently billing the Finch deployment owner for every anonymous
+  // install of this package.
+  throw new Error(
+    "No LLM provider configured. This tool needs its own key to do multi-step " +
+    "reasoning server-side - set one of BANKR_API_KEY, ANTHROPIC_API_KEY, " +
+    "OPENAI_API_KEY, or GROK_API_KEY as an environment variable (see the " +
+    "Configuration section of the README), then retry. Most other Finch tools " +
+    "don't need this - only ones that do their own internal LLM reasoning do."
+  );
 }
 
 async function callAnthropic(
@@ -160,7 +204,7 @@ async function callAnthropic(
   modelOverride?: string,
 ): Promise<string> {
   const messages: ChatMessage[] = [...history, { role: "user", content: userPrompt }];
-  const model = modelOverride ?? process.env.NOELCLAW_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+  const model = modelOverride ?? process.env.FINCH_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
 
   const res = await fetch(ANTHROPIC_URL, {
     method: "POST",
@@ -191,7 +235,7 @@ async function callBankr(
   timeoutMs: number,
   modelOverride?: string,
 ): Promise<string> {
-  const model = modelOverride ?? process.env.NOELCLAW_MODEL ?? process.env.BANKR_MODEL ?? "claude-haiku-4-5-20251001";
+  const model = modelOverride ?? process.env.FINCH_MODEL ?? process.env.BANKR_MODEL ?? "claude-haiku-4-5-20251001";
 
   const res = await fetch(BANKR_URL, {
     method: "POST",
@@ -235,7 +279,7 @@ async function callOpenAI(
   timeoutMs: number,
   modelOverride?: string,
 ): Promise<string> {
-  const model = modelOverride ?? process.env.NOELCLAW_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+  const model = modelOverride ?? process.env.FINCH_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
   const res = await fetch(openAiChatUrl(), {
     method: "POST",
@@ -271,7 +315,7 @@ async function callGrok(
   liveSearch?: LiveSearchOptions,
   modelOverride?: string,
 ): Promise<string> {
-  const model = modelOverride ?? process.env.NOELCLAW_MODEL ?? process.env.GROK_MODEL ?? "grok-4-fast-reasoning";
+  const model = modelOverride ?? process.env.FINCH_MODEL ?? process.env.GROK_MODEL ?? "grok-4-fast-reasoning";
 
   const body: Record<string, unknown> = {
     model,
