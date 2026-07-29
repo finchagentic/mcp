@@ -56,9 +56,15 @@ export function getMachineKey(): string {
  * decrypted on the exact machine that created it - never portable. Kept
  * solely so those existing wallets still open; getOrCreateWallet migrates
  * them to the portable scheme in place on first successful decrypt.
+ *
+ * `passphrase` is a parameter, not read from env, because the whole point of
+ * this fallback is testing what the file was ACTUALLY encrypted with - which
+ * may not be today's FINCH_WALLET_PASSPHRASE. The most common case this
+ * exists for: a user who never set a passphrase before (so the file was
+ * encrypted with "" + machine info) setting one for the FIRST time just now -
+ * at that moment env has the new passphrase, but the file predates it.
  */
-function getLegacyMachineKey(): string {
-  const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
+function getLegacyMachineKey(passphrase: string): string {
   return crypto
     .createHash("sha256")
     .update(passphrase + os.hostname() + os.platform() + os.arch())
@@ -95,20 +101,33 @@ export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNode
       // machine (it still needs that machine's hostname/platform/arch) - it
       // can't rescue a wallet file copied to a new machine from before this
       // fix; there was no passphrase-only secret saved anywhere to recover.
-      try {
-        const wallet = await ethers.Wallet.fromEncryptedJson(encrypted, getLegacyMachineKey());
-        _cachedWallet = wallet;
+      //
+      // Try two legacy candidates: today's passphrase (in case it was already
+      // set when this file was encrypted) and "" (the common case - a user
+      // setting FINCH_WALLET_PASSPHRASE for the first time, whose existing
+      // file predates having any passphrase at all).
+      const legacyCandidates = [...new Set([process.env.FINCH_WALLET_PASSPHRASE ?? "", ""])];
+      let legacyWallet: ethers.Wallet | ethers.HDNodeWallet | null = null;
+      for (const candidate of legacyCandidates) {
+        try {
+          legacyWallet = await ethers.Wallet.fromEncryptedJson(encrypted, getLegacyMachineKey(candidate));
+          break;
+        } catch { /* try next candidate */ }
+      }
+      if (legacyWallet) {
+        _cachedWallet = legacyWallet;
         // Migrate in place to the portable scheme now that we've proven we
         // hold the right key, so this only ever needs to happen once.
         try {
-          const migrated = await wallet.encrypt(getMachineKey());
+          const migrated = await legacyWallet.encrypt(getMachineKey());
           fs.writeFileSync(WALLET_FILE, migrated, { mode: 0o600 });
           process.stderr.write(`\nMigrated ${WALLET_FILE} to the portable passphrase scheme.\n\n`);
         } catch {
           /* migration is best-effort - the legacy key still works next run either way */
         }
-        return wallet;
-      } catch {
+        return legacyWallet;
+      }
+      {
         // A wallet file already exists but couldn't be decrypted under either
         // scheme - this almost always means FINCH_WALLET_PASSPHRASE doesn't
         // match what encrypted it, or this is a different machine and no
