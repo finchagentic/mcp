@@ -3,7 +3,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import * as crypto from "crypto";
 import { callConvex } from "../convex.js";
 import { ToolResult } from "../types.js";
-import { callLLM, hasDirectLLMKey } from "../llm.js";
+import { assertPublicUrl, refuseUrlText } from "../public-url.js";
 import {
   getLocalMemoryConfig,
   localMemoryAdd,
@@ -11,33 +11,12 @@ import {
   localMemoryList,
   localMemoryDelete,
   localMemoryProfile,
-  type LocalMemoryConfig,
 } from "../local-memory.js";
 
-// ─── Local-mode extract/consolidate (LLM calls via BYOK, no Convex) ──────────
-// These mirror what the Convex-side /memory/extract and /memory/consolidate
-// routes do server-side with Noelclaw's own Anthropic key - reimplemented
-// here using callLLM() (Bankr/Anthropic/OpenAI/Grok BYOK priority) so local
-// mode never falls back to Noelclaw's paid key for LLM work either.
-
-async function localExtractFacts(text: string): Promise<string[]> {
-  const system = "Extract 3-10 discrete, atomic, independently-searchable facts, preferences, or decisions from the given text. Return ONLY a JSON array of strings - no other text, no markdown fences.";
-  const raw = await callLLM(system, text, 1024);
-  try {
-    const parsed = JSON.parse(raw.trim());
-    if (Array.isArray(parsed)) return parsed.filter((f): f is string => typeof f === "string" && f.trim().length > 0);
-  } catch { /* fall through to line-based parsing */ }
-  return raw.split("\n").map((l) => l.replace(/^[-*\d.)\s]+/, "").trim()).filter(Boolean).slice(0, 10);
-}
-
-async function localConsolidateTopic(cfg: LocalMemoryConfig, topic: string, limit: number): Promise<{ summary: string; consolidatedFrom: number }> {
-  const results = await localMemorySearch(cfg, topic, limit);
-  if (!results.length) return { summary: "", consolidatedFrom: 0 };
-  const combined = results.map((r, i) => `[${i + 1}] ${r.content}`).join("\n\n");
-  const system = "Merge the following memory fragments on one topic into a single comprehensive, deduplicated summary. Remove redundancy, keep every distinct fact. Return only the summary text.";
-  const summary = await callLLM(system, `Topic: ${topic}\n\n${combined}`, 1024);
-  return { summary, consolidatedFrom: results.length };
-}
+// memory_extract and memory_consolidate used to run their own LLM calls here
+// (and a matching pair of Convex routes did the same server-side). Both are now
+// two-pass: the tool fetches and stores, the caller decides what the facts are
+// and how they merge. Local mode no longer needs a provider key at all.
 
 // ─── Helpers (proxied through Convex - server-side Supermemory key) ──────────
 
@@ -90,7 +69,7 @@ async function findDuplicateMemory(hash: string): Promise<{ id: string; title?: 
     const local = getLocalMemoryConfig();
     const results: any[] = local
       ? await localMemoryList(local, 50)
-      : ((await callConvex("/memory/list", "POST", { n: 50 }))?.results ?? []);
+      : ((await callConvex("/memory/list", "POST", { n: 50 }, "memory_list"))?.results ?? []);
     const match = results.find((r) => r.metadata?.contentHash === hash);
     if (!match) return null;
     return { id: match.id, title: match.metadata?.title, addedAt: match.metadata?.addedAt };
@@ -148,7 +127,7 @@ export async function syncToSupermemory(
 
   for (let attempt = 0; attempt <= SYNC_RETRY_DELAYS_MS.length; attempt++) {
     try {
-      await callConvex("/memory/add", "POST", payload);
+      await callConvex("/memory/add", "POST", payload, "memory_add");
       return;
     } catch (err) {
       lastError = err;
@@ -179,7 +158,7 @@ export async function searchSupermemory(
   try {
     const local = getLocalMemoryConfig();
     if (local) return await localMemorySearch(local, query, limit);
-    const data = await callConvex("/memory/search", "POST", { q: query, n: limit });
+    const data = await callConvex("/memory/search", "POST", { q: query, n: limit }, "memory_search");
     return data?.results ?? [];
   } catch {
     return [];
@@ -194,7 +173,7 @@ async function lexicalSearch(
   limit = 30,
 ): Promise<Array<{ id: string; content: string; metadata: any; rank: number }>> {
   try {
-    const data = await callConvex("/memory/lexical", "POST", { q: query, n: limit });
+    const data = await callConvex("/memory/lexical", "POST", { q: query, n: limit }, "memory_search");
     const rows = (data?.results ?? []) as any[];
     return rows.map((r, idx) => ({
       id:       r.id,
@@ -308,12 +287,13 @@ export const MEMORY_TOOLS: Tool[] = [
   {
     name: "memory_add",
     description:
-      "Add content to your Noelclaw semantic memory - no setup needed, no extra API keys. " +
+      "Add content to your Finch memory - no setup needed, no extra API keys. " +
       "Unlike vault_save, memory_add is instant: no versioning, no type required. " +
-      "Use for notes, decisions, preferences, or anything you want to find later with natural language. " +
+      "Use for notes, decisions, preferences, or anything you want to find later. " +
       "Pass sourceUrl to fetch and index any web page, GitHub repo, or Notion page automatically - " +
-      "searchable in ~30s. Memory is indexed semantically - 'what did I say about ETH yield?' " +
-      "will find it even without exact keywords. " +
+      "searchable in ~30s. Retrieval is full-text (keyword) search, not embeddings - " +
+      "'what did I say about ETH yield?' finds notes containing those words or close variants, " +
+      "not unrelated phrasing with the same meaning. " +
       "Auto-deduplicates: identical content in your recent 50 memories is skipped (override with force:true).",
     inputSchema: {
       type: "object",
@@ -330,10 +310,11 @@ export const MEMORY_TOOLS: Tool[] = [
   {
     name: "memory_search",
     description:
-      "Hybrid memory search - fuses semantic (embedding) + lexical (full-text BM25) retrieval via Reciprocal Rank Fusion. " +
-      "Catches both meaning matches ('low risk crypto yield' → 'conservative DeFi strategies') and exact-token lookups (env var names, contract addresses, IDs) that pure semantic search misses. " +
-      "90-day time-decay weighting on top so recent precise notes outrank stale ones. " +
-      "Falls back to semantic-only for memories added before v3.24 (no lexical mirror).",
+      "Full-text (keyword) search over your stored memories, with 90-day time-decay weighting so " +
+      "recent notes outrank stale ones with similar wording. Good for exact-token lookups (env var " +
+      "names, contract addresses, IDs, specific phrases) - it does not understand meaning, so " +
+      "'low risk crypto yield' will not match a note phrased as 'conservative DeFi strategies' " +
+      "unless the words themselves overlap.",
     inputSchema: {
       type: "object",
       properties: {
@@ -346,9 +327,10 @@ export const MEMORY_TOOLS: Tool[] = [
   {
     name: "memory_context",
     description:
-      "Retrieve the most semantically relevant memories for a topic, formatted as AI-ready context. " +
+      "Retrieve the most relevant memories for a topic, formatted as AI-ready context. " +
       "Use at the start of research tasks to prime with everything stored about a topic. " +
-      "Uses vector search - finds semantically related content, not just exact keyword matches.",
+      "Uses full-text (keyword) search, not embeddings - phrase your topic with the words " +
+      "you expect were actually used when the memory was saved.",
     inputSchema: {
       type: "object",
       properties: {
@@ -361,8 +343,8 @@ export const MEMORY_TOOLS: Tool[] = [
   {
     name: "memory_profile",
     description:
-      "Show your semantic memory stats - total memories stored, your memory space, and connected sources. " +
-      "Useful for auditing what Noelclaw knows about you.",
+      "Show your memory stats - total memories stored, your memory space, and connected sources. " +
+      "Useful for auditing what Finch knows about you.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -372,7 +354,7 @@ export const MEMORY_TOOLS: Tool[] = [
   {
     name: "memory_list",
     description:
-      "List your most recent Noelclaw memories without a search query. " +
+      "List your most recent Finch memories without a search query. " +
       "Useful to browse what's stored or audit before clearing. " +
       "Sorted by most recently added.",
     inputSchema: {
@@ -387,22 +369,25 @@ export const MEMORY_TOOLS: Tool[] = [
   {
     name: "memory_delete",
     description:
-      "Delete a specific memory by its ID. Get IDs from memory_search or memory_list results. " +
-      "This permanently removes the memory from your semantic store.",
+      "PERMANENT. Delete a specific memory by its ID — it cannot be recovered. " +
+      "Get IDs from memory_search or memory_list. Requires confirm: true. " +
+      "Show the user which memory you are about to delete (title/content) and get their " +
+      "agreement first — IDs come from search results and are easy to mix up.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Memory ID to delete (from memory_search or memory_list results)" },
+        confirm: { type: "boolean", description: "Must be true to delete. Guards against irreversible loss." },
       },
-      required: ["id"],
+      required: ["id", "confirm"],
     },
   },
   {
     name: "memory_insight",
     description:
-      "Get a full intelligence report on any topic - combines semantic memory AND vault entries, " +
+      "Get a full intelligence report on any topic - combines memory AND vault entries, " +
       "then identifies knowledge gaps and suggests next actions. " +
-      "Use this before starting any research or trade decision to see everything Noelclaw already knows. " +
+      "Use this before starting any research or trade decision to see everything Finch already knows. " +
       "Returns: confidence level, what you know, coverage timeline, gaps, and recommended next steps.",
     inputSchema: {
       type: "object",
@@ -416,48 +401,63 @@ export const MEMORY_TOOLS: Tool[] = [
   {
     name: "memory_extract",
     description:
-      "Auto-extract discrete facts, preferences, and decisions from any text and save them individually to semantic memory. " +
-      "Instead of storing a wall of text, Noelclaw breaks it into 3-10 searchable atomic facts using AI. " +
-      "Best for processing chat logs, research notes, meeting summaries, or any unstructured content. " +
-      "Each extracted fact becomes independently searchable - 'what do I prefer about staking?' will find it.",
+      "Save discrete facts, preferences and decisions to memory as individually searchable atoms " +
+      "instead of one wall of text. Two-pass, no API key needed. " +
+      "PASS 1 — call with `text`: returns the text with the extraction rubric. " +
+      "PASS 2 — call with `facts: [...]`: stores each fact separately, deduped. " +
+      "YOU decide what the facts are; this tool stores them. Best for chat logs, research notes, meeting summaries.",
     inputSchema: {
       type: "object",
       properties: {
-        text: { type: "string", description: "Text to extract facts from - notes, research, chat logs, any unstructured content" },
+        text: { type: "string", description: "PASS 1. Unstructured content to pull facts out of - notes, research, chat logs." },
+        facts: {
+          type: "array",
+          items: { type: "string" },
+          description: "PASS 2. The atomic facts you extracted. Each is stored as its own searchable memory. Supplying this skips pass 1 entirely.",
+        },
         source: { type: "string", description: "Optional label for where this came from (e.g. 'telegram', 'research', 'meeting')" },
       },
-      required: ["text"],
+      required: [],
     },
   },
   {
     name: "memory_publish",
     description:
-      "Publish a memory snippet to the Memory Marketplace - makes it publicly visible to all Noelclaw users. " +
-      "Great for sharing curated knowledge, useful context, research findings, or prompts. " +
-      "Saved as a public vault entry (type=memory). Once published it appears at /memory-marketplace in the app.",
+      "IRREVERSIBLE, PUBLIC. Publish a memory snippet to the Memory Marketplace — visible to " +
+      "ALL Finch users at /memory-marketplace. Reversible with vault_unpublish, but only for " +
+      "future discovery — anyone who already read it keeps what they saw. " +
+      "Requires confirm: true. Never call this on the user's behalf without them explicitly asking " +
+      "to publish; re-read the content for anything private (keys, addresses, personal details) first. " +
+      "Saved as a public vault entry (type=memory).",
     inputSchema: {
       type: "object",
       properties: {
-        title:      { type: "string",                   description: "Short title for the memory (shown in marketplace)" },
-        content:    { type: "string",                   description: "The memory content to share" },
+        title:      { type: "string",                   description: "Short title for the memory (shown publicly in the marketplace)" },
+        content:    { type: "string",                   description: "The memory content to share — this becomes PUBLIC" },
         tags:       { type: "array", items: { type: "string" }, description: "Optional tags (e.g. ['DeFi', 'Base', 'research'])" },
-        authorName: { type: "string",                   description: "Display name for the author (defaults to your wallet address)" },
+        authorName: { type: "string",                   description: "Public display name. Defaults to \"Anonymous\" — do NOT pass a wallet address unless the user asks to be identified." },
+        confirm:    { type: "boolean",                  description: "Must be true to publish. Guards against accidental public disclosure." },
       },
-      required: ["title", "content"],
+      required: ["title", "content", "confirm"],
     },
   },
   {
     name: "memory_consolidate",
     description:
-      "Fetch all memories on a topic and consolidate them into a single comprehensive summary using AI. " +
-      "Removes redundancy, merges overlapping facts, and saves the result as a new 'consolidated' memory. " +
-      "Use this to clean up fragmented knowledge after heavy research sessions. " +
-      "Returns the summary and saves it automatically - the original memories remain intact.",
+      "Clean up fragmented knowledge after heavy research sessions. Two-pass, no API key needed. " +
+      "PASS 1 — call with `topic`: fetches every memory on that topic and returns them numbered, with the " +
+      "merge rubric. " +
+      "PASS 2 — call with `topic` + `summary`: saves your merged version as a new consolidated memory. " +
+      "Originals always remain intact.",
     inputSchema: {
       type: "object",
       properties: {
         topic: { type: "string", description: "Topic to consolidate memories for (e.g. 'ETH liquid staking', 'Base DeFi')" },
-        limit: { type: "number", description: "Max source memories to consolidate (default 12)" },
+        limit: { type: "number", description: "Max source memories to fetch (default 12)" },
+        summary: {
+          type: "string",
+          description: "PASS 2 only. Your merged summary. Supplying it switches this tool from 'return the memories' to 'save the result'.",
+        },
       },
       required: ["topic"],
     },
@@ -495,15 +495,56 @@ const InsightSchema = z.object({
   depth: z.enum(["quick", "standard", "deep"]).optional(),
 });
 const ExtractSchema = z.object({
-  text: z.string().min(1),
+  text: z.string().min(1).optional(),
+  facts: z.array(z.string().min(1)).min(1).max(50).optional(),
   source: z.string().optional(),
-});
+}).refine((v) => !!v.text || !!v.facts, { message: "pass `text` (pass 1) or `facts` (pass 2)" });
+
 const ConsolidateSchema = z.object({
   topic: z.string().min(1),
   limit: z.number().optional(),
+  summary: z.string().min(1).optional(),
 });
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
+
+// ── Structured output builders (schemas in output-schemas.ts) ───────────────
+export function buildMemorySearch(query: string, decayed: any[]): Record<string, unknown> {
+  return {
+    query,
+    count: decayed.length,
+    memories: decayed.map((r) => ({
+      id: r.id,
+      title: r.metadata?.title ?? null,
+      content: r.content,
+      score: r._decayedScore ?? r.fusedScore ?? null,
+      ageDays: r._ageDays != null ? Math.round(r._ageDays) : null,
+      pinned: !!r._pinned,
+      semanticRank: r.semanticRank ?? null,
+      lexicalRank: r.lexicalRank ?? null,
+    })),
+  };
+}
+
+export function buildMemoryContext(topic: string, results: any[]): Record<string, unknown> {
+  return {
+    topic,
+    count: results.length,
+    memories: results.map((r) => ({ title: r.metadata?.title ?? null, content: r.content })),
+  };
+}
+
+export function buildMemoryProfile(data: any): Record<string, unknown> {
+  return { space: data?.space ?? null, total: data?.total ?? 0, status: data?.status ?? "unknown" };
+}
+
+export function buildMemoryList(tag: string | undefined, results: any[]): Record<string, unknown> {
+  return {
+    tag: tag ?? null,
+    count: results.length,
+    memories: results.map((r) => ({ id: r.id, title: r.metadata?.title ?? null, content: r.content })),
+  };
+}
 
 export async function handleMemoryTool(name: string, args: unknown): Promise<ToolResult | null> {
   switch (name) {
@@ -512,6 +553,18 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
 
       const { content, title, tags, sourceUrl, force } = parsed.data;
+
+      // `sourceUrl` is not stored, it is fetched and indexed — by the local
+      // memory server on the user's own machine when local mode is on. An
+      // unrestricted URL therefore pulls LAN and loopback content into memory,
+      // where memory_search reads it straight back out.
+      if (sourceUrl) {
+        const unsafe = await assertPublicUrl(sourceUrl);
+        if (unsafe) {
+          return { content: [{ type: "text", text: refuseUrlText(sourceUrl, unsafe) }], isError: true };
+        }
+      }
+
       const hash = contentHash(content);
 
       // Dedup: skip if an identical-content memory exists in recent history,
@@ -539,7 +592,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       const localAdd = getLocalMemoryConfig();
       const data = localAdd
         ? await localMemoryAdd(localAdd, content, addMetadata, sourceUrl).catch((err: any) => ({ error: err.message }))
-        : await callConvex("/memory/add", "POST", { content, metadata: addMetadata, ...(sourceUrl ? { sourceUrl } : {}) }).catch((err: any) => ({ error: err.message }));
+        : await callConvex("/memory/add", "POST", { content, metadata: addMetadata, ...(sourceUrl ? { sourceUrl } : {}) }, "memory_add").catch((err: any) => ({ error: err.message }));
 
       if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
 
@@ -570,18 +623,19 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       // Over-fetch so post-decay ranking still has enough material.
       const overfetch = Math.min(50, Math.max(limit * 2, 20));
 
-      // ─── Hybrid retrieval ────────────────────────────────────────────
-      // Fan out semantic (Supermemory embedding) + lexical (Convex full-text)
-      // in parallel, fuse via Reciprocal Rank Fusion. Falls back gracefully:
-      // if lexical is empty (e.g. user has only pre-v3.24 memories) the
-      // fused list equals semantic.
+      // ─── Retrieval ───────────────────────────────────────────────────
+      // Fan out two full-text queries (searchSupermemory and lexicalSearch -
+      // both call Convex full-text search under different names, there is no
+      // embedding step despite the "semantic"/"Supermemory" naming) in
+      // parallel, fuse via Reciprocal Rank Fusion so results present in both
+      // rank highest.
       const fused = await hybridMemorySearch(query, overfetch);
       const raw = fused as Array<{
         id: string; content: string; metadata: any; fusedScore: number;
         semanticRank: number | null; lexicalRank: number | null; score?: number;
       }>;
 
-      if (!raw.length) return { content: [{ type: "text", text: `No memories found for: "${query}"\nTry adding content with \`memory_add\` or \`vault_save\`.` }] };
+      if (!raw.length) return { content: [{ type: "text", text: `No memories found for: "${query}"\nTry adding content with \`memory_add\` or \`vault_save\`.` }], structuredContent: buildMemorySearch(query, []) };
 
       // ─── Time-decay weighting ─────────────────────────────────────────
       // Apply an age-aware multiplier to the fused RRF score so a relevant
@@ -647,7 +701,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
         ].join("\n");
       }
 
-      return { content: [{ type: "text", text: [header, "", ...rows, promotionHint].filter(Boolean).join("\n") }] };
+      return { content: [{ type: "text", text: [header, "", ...rows, promotionHint].filter(Boolean).join("\n") }], structuredContent: buildMemorySearch(query, decayed) };
     }
 
     case "memory_context": {
@@ -660,7 +714,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       // only would miss. Same fusion as memory_search.
       const results = await hybridMemorySearch(topic, limit);
 
-      if (!results.length) return { content: [{ type: "text", text: `No context found for: "${topic}"\nBuild your memory base with vault_save or memory_add.` }] };
+      if (!results.length) return { content: [{ type: "text", text: `No context found for: "${topic}"\nBuild your memory base with vault_save or memory_add.` }], structuredContent: buildMemoryContext(topic, []) };
 
       const contextParts = results.map((r, i) => {
         const title = r.metadata?.title ? `### ${r.metadata.title}` : `### Memory ${i + 1}`;
@@ -680,6 +734,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
             contextParts.join("\n\n---\n\n"),
           ].join("\n"),
         }],
+        structuredContent: buildMemoryContext(topic, results),
       };
     }
 
@@ -687,7 +742,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       const localProfileCfg = getLocalMemoryConfig();
       const data = localProfileCfg
         ? await localMemoryProfile(localProfileCfg).catch(() => null)
-        : await callConvex("/memory/profile", "GET").catch(() => null);
+        : await callConvex("/memory/profile", "GET", undefined, "memory_profile").catch(() => null);
       const total = data?.total ?? 0;
       const status = data?.status ?? "unknown";
       const space = data?.space ?? "-";
@@ -696,7 +751,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
         content: [{
           type: "text",
           text: [
-            `🧠 **Noelclaw Semantic Memory**`,
+            `🧠 **Finch Semantic Memory**`,
             ``,
             `Space: \`${space}\``,
             `Total memories: **${total}**`,
@@ -705,11 +760,12 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
             `**Auto-synced sources:**`,
             `• vault_save - ✅`,
             `• memory_add (URL indexing) - ✅`,
-            `• Google Drive / Gmail / Notion - connect at noelclaw.com`,
+            `• Google Drive / Gmail / Notion - connect at finchagentic.com`,
             ``,
             `**Capabilities:** Semantic search · Vector context · 81.6% LongMemEval`,
           ].join("\n"),
         }],
+        structuredContent: buildMemoryProfile(data),
       };
     }
 
@@ -726,23 +782,34 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
           return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
         }
       } else {
-        const data = await callConvex("/memory/list", "POST", { n: limit, tag }).catch((err: any) => ({ error: err.message })) as any;
+        const data = await callConvex("/memory/list", "POST", { n: limit, tag }, "memory_list").catch((err: any) => ({ error: err.message })) as any;
         if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
         results = data?.results ?? [];
       }
-      if (!results.length) return { content: [{ type: "text", text: `No memories stored yet. Use \`memory_add\` to start building your knowledge base.` }] };
+      if (!results.length) return { content: [{ type: "text", text: `No memories stored yet. Use \`memory_add\` to start building your knowledge base.` }], structuredContent: buildMemoryList(tag, []) };
       const header = `🧠 **Memories** (${results.length} shown${tag ? `, tag: ${tag}` : ""})`;
       const rows = results.map((r: any, i: number) => {
         const title = r.metadata?.title ?? "";
         const preview = r.content.slice(0, 100).replace(/\n/g, " ");
         return `${i + 1}. \`${r.id}\`${title ? ` **${title}**` : ""}\n   ${preview}${r.content.length > 100 ? "…" : ""}`;
       });
-      return { content: [{ type: "text", text: [header, "", ...rows].join("\n") }] };
+      return { content: [{ type: "text", text: [header, "", ...rows].join("\n") }], structuredContent: buildMemoryList(tag, results) };
     }
 
     case "memory_delete": {
       const parsed = DeleteMemSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if ((args as { confirm?: boolean })?.confirm !== true) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              "Refusing to delete: this permanently removes the memory and cannot be undone. " +
+              "Show the user the memory you intend to delete, then pass `confirm: true`.",
+          }],
+          isError: true,
+        };
+      }
       const localDel = getLocalMemoryConfig();
       if (localDel) {
         try {
@@ -751,7 +818,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
           return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
         }
       } else {
-        const data = await callConvex("/memory/delete", "POST", { id: parsed.data.id }).catch((err: any) => ({ error: err.message }));
+        const data = await callConvex("/memory/delete", "POST", { id: parsed.data.id }, "memory_delete").catch((err: any) => ({ error: err.message }));
         if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
       }
       return { content: [{ type: "text", text: `🗑️ Memory deleted: \`${parsed.data.id}\`` }] };
@@ -769,7 +836,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       // matches. Vault side runs in parallel as before.
       const [memResults, vaultData] = await Promise.all([
         hybridMemorySearch(topic, memLimit),
-        callConvex(`/vault/search?q=${encodeURIComponent(topic)}&limit=6`, "GET", undefined, "memory_insight").catch(() => ({ results: [] })),
+        callConvex(`/vault/search?q=${encodeURIComponent(topic)}&limit=6`, "GET", undefined, "vault_search").catch(() => ({ results: [] })),
       ]);
 
       const vaultResults: any[] = vaultData.results ?? [];
@@ -857,49 +924,62 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     case "memory_extract": {
       const parsed = ExtractSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
-      const { text, source = "extract" } = parsed.data;
+      const { text, facts, source = "extract" } = parsed.data;
 
-      const localExtractCfg = getLocalMemoryConfig();
-      let facts: string[];
-      let saved = 0;
-      if (localExtractCfg) {
-        // Local memory mode promises zero Convex/Noelclaw-proxy involvement.
-        // callLLM() would otherwise silently fall through to Noelclaw's
-        // backend when no BYOK provider key is set - fail clearly instead.
-        if (!hasDirectLLMKey()) {
-          return {
-            content: [{
-              type: "text",
-              text: "Local memory is enabled, but this tool needs an LLM to extract facts and no provider key is set (BANKR_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / GROK_API_KEY). Run `noelclaw setup` to add one - without it, this would otherwise fall back to Noelclaw's proxy, defeating the point of running memory locally.",
-            }],
-            isError: true,
-          };
-        }
-        try {
-          facts = await localExtractFacts(text);
-          const results = await Promise.allSettled(
-            facts.map((fact) => localMemoryAdd(localExtractCfg, fact, { source, addedAt: Date.now() })),
-          );
-          saved = results.filter((r) => r.status === "fulfilled").length;
-        } catch (err: any) {
-          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
-        }
-      } else {
-        const data = await callConvex("/memory/extract", "POST", { text, source }).catch((err: any) => ({ error: err.message }));
-        if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
-        facts = data?.facts ?? [];
-        saved = data?.saved ?? 0;
+      // ── PASS 1: hand the text back with the extraction rubric ───────────
+      // Deciding what counts as a fact is judgement about *this user's*
+      // content - the caller has the conversation, the tool doesn't.
+      if (!facts) {
+        return {
+          content: [{
+            type: "text",
+            text: [
+              `📄 **Extract facts from this** (${text!.length.toLocaleString()} chars)`,
+              ``,
+              `---`,
+              text!.slice(0, 20_000) + (text!.length > 20_000 ? `\n\n…[truncated ${text!.length - 20_000} chars]` : ""),
+              `---`,
+              ``,
+              `## Rules`,
+              ``,
+              `- One **atomic** fact per entry — independently true and independently searchable.`,
+              `- Self-contained: "prefers Aerodrome over Uniswap on Base for stable pairs", not "prefers it".`,
+              `- Keep facts, preferences and decisions. Drop pleasantries, restated questions and anything`,
+              `  already obvious from the user's other memories.`,
+              `- Preserve numbers, dates, addresses and names exactly. Never round or paraphrase them.`,
+              `- Do not infer beyond the text. If it wasn't stated, it isn't a fact.`,
+              `- 3-10 facts is typical. Fewer is fine — do not pad to hit a count.`,
+              ``,
+              `Then call \`memory_extract\` again with \`facts: ["…", "…"]\`${source !== "extract" ? ` and \`source: "${source}"\`` : ""} to store them.`,
+            ].join("\n"),
+          }],
+        };
       }
+
+      // ── PASS 2: store each fact as its own memory ───────────────────────
+      const localExtractCfg = getLocalMemoryConfig();
+      const metaFor = () => ({ source, addedAt: Date.now() });
+      const results = await Promise.allSettled(
+        facts.map((fact) =>
+          localExtractCfg
+            ? localMemoryAdd(localExtractCfg, fact, metaFor())
+            : callConvex("/memory/add", "POST", { content: fact, metadata: metaFor() }, "memory_add"),
+        ),
+      );
+      const saved = results.filter((r) => r.status === "fulfilled").length;
+      const failed = results.length - saved;
 
       return {
         content: [{
           type: "text",
           text: [
-            `🧠 **Auto-extracted ${facts.length} facts** (${saved} saved)`,
+            `🧠 **Stored ${saved} of ${facts.length} facts**${failed ? ` — ${failed} failed` : ""}`,
             ``,
-            ...facts.map((f: string, i: number) => `${i + 1}. ${f}`),
+            ...facts.map((f: string, i: number) => `${results[i].status === "fulfilled" ? "✓" : "✗"} ${i + 1}. ${f}`),
             ``,
-            `All facts are now searchable via \`memory_search\`.`,
+            failed
+              ? `Failed writes are usually auth (\`finch login\`) or an unreachable local memory server.`
+              : `All facts are now searchable via \`memory_search\`.`,
           ].join("\n"),
         }],
       };
@@ -908,61 +988,98 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     case "memory_consolidate": {
       const parsed = ConsolidateSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
-      const { topic, limit = 12 } = parsed.data;
-
+      const { topic, limit = 12, summary } = parsed.data;
       const localConsolidateCfg = getLocalMemoryConfig();
-      let summary: string;
-      let consolidatedFrom: number | string;
-      let savedId = "consolidated";
-      if (localConsolidateCfg) {
-        if (!hasDirectLLMKey()) {
-          return {
-            content: [{
-              type: "text",
-              text: "Local memory is enabled, but this tool needs an LLM to consolidate memories and no provider key is set (BANKR_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / GROK_API_KEY). Run `noelclaw setup` to add one - without it, this would otherwise fall back to Noelclaw's proxy, defeating the point of running memory locally.",
-            }],
-            isError: true,
-          };
+
+      // ── PASS 2: save the caller's merged version ────────────────────────
+      if (summary) {
+        const meta = { title: `Consolidated: ${topic}`, source: "memory_consolidate", addedAt: Date.now() };
+        const saved = localConsolidateCfg
+          ? await localMemoryAdd(localConsolidateCfg, summary, meta).catch((err: any) => ({ error: err.message }))
+          : await callConvex("/memory/add", "POST", { content: summary, metadata: meta }, "memory_add").catch((err: any) => ({ error: err.message }));
+        if ((saved as any)?.error) {
+          return { content: [{ type: "text", text: `Error saving consolidated memory: ${(saved as any).error}` }], isError: true };
         }
-        try {
-          const result = await localConsolidateTopic(localConsolidateCfg, topic, limit);
-          if (!result.consolidatedFrom) return { content: [{ type: "text", text: `No memories found for "${topic}" to consolidate.` }], isError: true };
-          summary = result.summary;
-          consolidatedFrom = result.consolidatedFrom;
-          const saved = await localMemoryAdd(localConsolidateCfg, summary, { title: `Consolidated: ${topic}`, source: "memory_consolidate", addedAt: Date.now(), consolidatedFrom });
-          savedId = saved.id;
-        } catch (err: any) {
-          return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
-        }
-      } else {
-        const data = await callConvex("/memory/consolidate", "POST", { topic, n: limit }).catch((err: any) => ({ error: err.message }));
-        if (data?.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
-        summary = data?.summary ?? "";
-        consolidatedFrom = data?.consolidatedFrom ?? "?";
-        savedId = data?.id ?? "consolidated";
+        return {
+          content: [{
+            type: "text",
+            text: [
+              `🧠 **Consolidated "${topic}" saved** — ID: \`${(saved as any)?.id ?? "saved"}\``,
+              `The source memories were left intact.`,
+              ``,
+              `Find it with \`memory_search query: "${topic}"\`.`,
+            ].join("\n"),
+          }],
+        };
       }
+
+      // ── PASS 1: fetch every memory on the topic, numbered ───────────────
+      const rows = await searchSupermemory(topic, limit);
+      if (rows.length === 0) {
+        return { content: [{ type: "text", text: `No memories found for "${topic}" to consolidate.` }], isError: true };
+      }
+
+      const numbered = rows.map((r, i) => {
+        const title = r.metadata?.title ? `**${r.metadata.title}** — ` : "";
+        const when = r.metadata?.addedAt ? ` _(${new Date(r.metadata.addedAt).toISOString().slice(0, 10)})_` : "";
+        return `${i + 1}. ${title}${r.content.trim()}${when}`;
+      });
 
       return {
         content: [{
           type: "text",
           text: [
-            `🧠 **Consolidated "${topic}"** - merged ${consolidatedFrom} memories`,
-            `Saved as: \`${savedId}\``,
+            `🧠 **${rows.length} memories on "${topic}"**`,
             ``,
-            `**Summary:**`,
-            summary,
+            ...numbered,
             ``,
-            `Use \`memory_search query: "${topic}"\` to find it.`,
+            `---`,
+            ``,
+            `## Merge them`,
+            ``,
+            `- Fold overlapping facts into one statement; drop verbatim duplicates.`,
+            `- **Where two memories conflict, keep both and say which is newer** — dates are shown above.`,
+            `  Silently dropping the older one destroys the record of a changed mind.`,
+            `- Preserve every number, date, address and name exactly as written.`,
+            `- Group by sub-theme if that makes the result easier to search later.`,
+            `- Add nothing that isn't in the list above.`,
+            ``,
+            `Then call \`memory_consolidate\` again with \`topic: "${topic}"\` and \`summary: "<your merged text>"\` ` +
+              `to save it. The ${rows.length} originals stay where they are.`,
           ].join("\n"),
         }],
       };
     }
 
     case "memory_publish": {
-      const { title, content, tags, authorName } = args as {
-        title: string; content: string; tags?: string[]; authorName?: string;
+      const { title, content, tags, authorName, confirm } = args as {
+        title: string; content: string; tags?: string[]; authorName?: string; confirm?: boolean;
       };
       if (!title || !content) return { content: [{ type: "text", text: "title and content are required" }], isError: true };
+      if (confirm !== true) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              "Refusing to publish: this makes the content **public to all Finch users**. " +
+              "It can be hidden again with `vault_unpublish`, but not un-read. Review the content " +
+              "for keys, addresses and personal details, then pass `confirm: true`.",
+          }],
+          isError: true,
+        };
+      }
+      if (authorName && /^0x[a-fA-F0-9]{40}$/.test(authorName.trim())) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              "Refusing to publish with a wallet address as the author name — that permanently " +
+              "links your on-chain identity to this public entry. Use a handle, or omit authorName " +
+              "to publish as \"Anonymous\".",
+          }],
+          isError: true,
+        };
+      }
 
       const data = await callConvex("/vault/save", "POST", {
         type:       "memory",
@@ -985,7 +1102,10 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
             `**Key:** \`${data.key}\``,
             `**Version:** ${data.version ?? 1}`,
             ``,
-            `Now visible at the Memory Marketplace in the Noelclaw app.`,
+            `Now visible at the Memory Marketplace in the Finch app.`,
+            ``,
+            `Make it private again: \`vault_unpublish key: "${data.key}"\``,
+            `That stops future discovery. Anyone who already read it keeps what they saw.`,
           ].join("\n"),
         }],
       };

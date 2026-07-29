@@ -8,7 +8,7 @@ export const CHRONICLE_TOOLS: Tool[] = [
   {
     name: "chronicle_add",
     description:
-      "Log an event to Noel Chronicle - the system-wide audit log for your AI runtime. " +
+      "Log an event to Finch Chronicle - the system-wide audit log for your AI runtime. " +
       "Records anything meaningful: vault saves, agent updates, automation triggers, " +
       "custom milestones, research completions. Chronicle is your permanent timeline of what happened. " +
       "Types: vault | memory | agent | tool | automation | monitor | system | custom.",
@@ -39,7 +39,7 @@ export const CHRONICLE_TOOLS: Tool[] = [
   {
     name: "chronicle_list",
     description:
-      "Read the Noel Chronicle event log - your AI runtime timeline. Returns recent events in reverse chronological order. " +
+      "Read the Finch Chronicle event log - your AI runtime timeline. Returns recent events in reverse chronological order. " +
       "Filter by type to see only vault saves, agent activity, automations, etc.",
     inputSchema: {
       type: "object",
@@ -59,7 +59,7 @@ export const CHRONICLE_TOOLS: Tool[] = [
   {
     name: "chronicle_search",
     description:
-      "Search the Noel Chronicle by keyword. Matches against event titles and details. " +
+      "Search the Finch Chronicle by keyword. Matches against event titles and details. " +
       "Useful for finding when something specific happened: 'when did I last research ETH?' or 'find all vault saves for Base'.",
     inputSchema: {
       type: "object",
@@ -123,6 +123,38 @@ function formatEntry(e: any): string {
   return lines.join("\n");
 }
 
+// ── Structured output builders (schemas in output-schemas.ts) ───────────────
+function chronicleEntry(e: any) {
+  return { title: e.title ?? null, detail: e.detail ?? null, type: e.type ?? null, ts: e.ts ?? null };
+}
+
+export function buildChronicleList(type: string | undefined, entries: any[]): Record<string, unknown> {
+  return { type: type ?? null, count: entries.length, entries: entries.map(chronicleEntry) };
+}
+
+export function buildChronicleSearch(query: string, type: string | undefined, matched: any[]): Record<string, unknown> {
+  return { query, type: type ?? null, count: matched.length, entries: matched.map(chronicleEntry) };
+}
+
+export function buildChronicleStats(days: number, entries: any[]): Record<string, unknown> {
+  const byType: Record<string, number> = {};
+  const byDay: Record<string, number> = {};
+  for (const e of entries) {
+    byType[e.type] = (byType[e.type] ?? 0) + 1;
+    const day = new Date(e.ts).toISOString().slice(0, 10);
+    byDay[day] = (byDay[day] ?? 0) + 1;
+  }
+  const busiestDays = Object.entries(byDay).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([day, count]) => ({ day, count }));
+  return {
+    days,
+    totalEvents: entries.length,
+    activeDays: Object.keys(byDay).length,
+    avgPerDay: entries.length / days,
+    byType: Object.entries(byType).sort((a, b) => b[1] - a[1]).map(([type, count]) => ({ type, count })),
+    busiestDays,
+  };
+}
+
 export async function handleChronicle(
   name: string,
   args: Record<string, unknown>,
@@ -175,18 +207,19 @@ export async function handleChronicle(
           type: "text",
           text: "No chronicle entries yet. Use `chronicle_add` to start logging events.",
         }],
+        structuredContent: buildChronicleList(type, []),
       };
     }
 
     const lines: string[] = [
-      `## 📜 Noel Chronicle${type ? ` · ${type}` : ""}`,
+      `## 📜 Finch Chronicle${type ? ` · ${type}` : ""}`,
       `*${entries.length} event${entries.length !== 1 ? "s" : ""}*`,
       "",
     ];
 
     for (const e of entries) lines.push(formatEntry(e));
 
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildChronicleList(type, entries) };
   }
 
   if (name === "chronicle_search") {
@@ -213,6 +246,7 @@ export async function handleChronicle(
           type: "text",
           text: `No chronicle events matching "${query}"${type ? ` (type: ${type})` : ""}. (searched most recent 100 entries)`,
         }],
+        structuredContent: buildChronicleSearch(query, type, []),
       };
     }
 
@@ -223,7 +257,7 @@ export async function handleChronicle(
     ];
     for (const e of matched) lines.push(formatEntry(e));
 
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildChronicleSearch(query, type, matched) };
   }
 
   if (name === "chronicle_stats") {
@@ -242,6 +276,7 @@ export async function handleChronicle(
     if (allEntries.length === 0) {
       return {
         content: [{ type: "text", text: `No chronicle events in the past ${days} days.` }],
+        structuredContent: buildChronicleStats(days, []),
       };
     }
 
@@ -278,7 +313,7 @@ export async function handleChronicle(
       `*Note: stats based on most recent 100 entries*`,
     ];
 
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildChronicleStats(days, allEntries) };
   }
 
   return { content: [{ type: "text", text: `Unknown chronicle tool: ${name}` }], isError: true };
