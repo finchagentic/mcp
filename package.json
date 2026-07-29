@@ -1,17 +1,20 @@
 {
-  "name": "@noelclaw/mcp",
-  "version": "3.32.7",
-  "description": "The runtime layer for Agentic AI. 108 MCP tools: persistent memory, autonomous agents, vault storage, scheduled workflows, DeFi execution on Base, deep research, and Noel Shell tool calling (estimate + execute swaps) — works in Claude Code, Cursor, Windsurf, Codex, Aeon, Antigravity, and any MCP-compatible client.",
+  "name": "@finchagentic/mcp",
+  "version": "4.1.0",
+  "description": "The runtime layer for Agentic AI. Persistent memory, autonomous agents, and workflows that survive every session.",
   "main": "dist/index.js",
   "bin": {
-    "noelclaw": "dist/cli.js",
-    "noelclaw-mcp": "dist/index.js"
+    "finch": "dist/cli.js",
+    "finch-mcp": "dist/index.js"
   },
   "preferGlobal": true,
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:mutation": "node scripts/mutation-check.js",
     "prepare": "husky",
     "prepublishOnly": "npm run build && node scripts/version-readme.js"
   },
@@ -20,36 +23,25 @@
   },
   "keywords": [
     "mcp",
-    "mcp-server",
     "model-context-protocol",
     "ai-agent",
-    "autonomous-agents",
-    "persistent-memory",
-    "memory-layer",
-    "vault",
     "agentic",
-    "workflow-automation",
+    "persistent-memory",
+    "autonomous-agents",
+    "workflows",
+    "vault",
+    "finch",
+    "finchagentic",
     "claude-code",
-    "cursor",
-    "windsurf",
-    "noelclaw",
-    "research",
-    "automation",
-    "defi",
-    "base-chain",
-    "tool-calling",
-    "noel-shell",
-    "ai-terminal",
-    "knowledge-graph",
-    "semantic-search"
+    "cursor"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/noelclaw/mcp.git"
+    "url": "git+https://github.com/finchagentic/mcp.git"
   },
-  "homepage": "https://github.com/noelclaw/mcp#readme",
+  "homepage": "https://docs.finch.com",
   "bugs": {
-    "url": "https://github.com/noelclaw/mcp/issues"
+    "url": "https://github.com/finchagentic/mcp/issues"
   },
   "license": "MIT",
   "files": [
@@ -71,7 +63,8 @@
     "lint-staged": "^15.2.10",
     "ts-node": "^10.9.2",
     "typescript": "^5.0.0",
-    "typescript-eslint": "^8.63.0"
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=18"
