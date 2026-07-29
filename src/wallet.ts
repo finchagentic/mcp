@@ -177,6 +177,40 @@ async function broadcastTx(signedTx: string): Promise<string> {
   return data.result;
 }
 
+/**
+ * Poll for the mined receipt and report the ACTUAL on-chain outcome.
+ *
+ * eth_sendRawTransaction only confirms the mempool accepted the tx, not that
+ * it succeeded - a stale quote, slippage beyond the router's own guard, or an
+ * allowance edge case can all revert on-chain while still broadcasting fine.
+ * Callers must gate their success/failure message on this, not on
+ * signAndBroadcast() returning a hash.
+ */
+export async function waitForReceipt(
+  txHash: string,
+  timeoutMs = 60_000,
+  pollMs = 2_000
+): Promise<{ mined: boolean; ok?: boolean; blockNumber?: number; gasUsed?: string }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const receipt = await rpcPost("eth_getTransactionReceipt", [txHash]);
+      if (receipt) {
+        return {
+          mined: true,
+          ok: parseInt(receipt.status, 16) === 1,
+          blockNumber: parseInt(receipt.blockNumber, 16),
+          gasUsed: receipt.gasUsed ? BigInt(receipt.gasUsed).toString() : undefined,
+        };
+      }
+    } catch {
+      /* transient RPC error - keep polling until timeout */
+    }
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  return { mined: false };
+}
+
 export async function signAndBroadcast(
   wallet: ethers.Wallet | ethers.HDNodeWallet,
   txData: {

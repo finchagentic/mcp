@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { callConvex } from "../convex.js";
-import { getOrCreateWallet, signAndBroadcast } from "../wallet.js";
+import { getOrCreateWallet, signAndBroadcast, waitForReceipt } from "../wallet.js";
 import { ToolResult } from "../types.js";
+import { decimalsFor } from "../token-decimals.js";
 
 export const DEFI_TOOLS: Tool[] = [
   {
@@ -41,11 +42,38 @@ const DefiYieldsSchema = z.object({
   limit:  z.number().int().min(1).max(100).optional(),
 }).default({});
 
-const BUY_DECIMALS: Record<string, number> = { USDC: 6, USDT: 6, DAI: 18, ETH: 18, WETH: 18 };
-
 function formatTokenAmount(raw: string, token: string): string {
-  const dec = BUY_DECIMALS[token.toUpperCase()] ?? 18;
-  return (parseInt(raw) / Math.pow(10, dec)).toFixed(dec === 6 ? 2 : 6);
+  const dec = decimalsFor(token);
+  // Unknown decimals: show raw units rather than a confidently wrong number.
+  if (dec === undefined) return `${raw} (raw units — decimals unknown)`;
+  // BigInt math: parseInt on an 18-digit wei string loses precision past
+  // MAX_SAFE_INTEGER.
+  try {
+    const places = dec === 6 ? 2 : 6;
+    const scale = 10n ** BigInt(dec);
+    const value = BigInt(raw);
+    const whole = value / scale;
+    const frac = (value % scale).toString().padStart(dec, "0").slice(0, places);
+    return places > 0 ? `${whole}.${frac}` : `${whole}`;
+  } catch {
+    return raw;
+  }
+}
+
+// Structured output builder for get_defi_yields (schema in output-schemas.ts).
+export function buildDefiYields(token: string | undefined, minApy: number, pools: any[]): Record<string, unknown> {
+  return {
+    token: token ? token.toUpperCase() : null,
+    minApy,
+    count: pools.length,
+    pools: pools.map((p) => ({
+      symbol: p.symbol ?? p.pool ?? null,
+      project: p.project ?? null,
+      apyPct: p.apy ?? null,
+      tvlUsd: p.tvlUsd ?? null,
+      chain: p.chain ?? null,
+    })),
+  };
 }
 
 export async function handleDefiTool(name: string, args: unknown): Promise<ToolResult | null> {
@@ -79,7 +107,7 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
       // Pass the MCP local wallet as the swap taker so 0x routes output back
       // to the wallet that's signing - not the backend's custodial wallet.
       const localWallet = await getOrCreateWallet();
-      const result = await callConvex("/mcp/defi/swap", "POST", { fromToken, toToken, amount, taker: localWallet.address, slippagePercentage: slippageLimit / 100 }, "estimate_swap");
+      const result = await callConvex("/mcp/defi/swap", "POST", { fromToken, toToken, amount, taker: localWallet.address, slippagePercentage: slippageLimit / 100 }, "swap_tokens");
       if (!result.success) return { content: [{ type: "text", text: `Estimate failed: ${result.error}` }], isError: true };
 
       const q = result.quote;
@@ -141,17 +169,25 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
 
       const txHash = await signAndBroadcast(wallet, q);
       const buyAmountHuman = formatTokenAmount(q.buyAmount, q.buyToken ?? toToken);
+      const receipt = await waitForReceipt(txHash);
+      const header = !receipt.mined
+        ? `⏳ Broadcast, not yet confirmed within the wait window.`
+        : receipt.ok
+          ? `✅ Swap confirmed on-chain (block ${receipt.blockNumber}).`
+          : `❌ Transaction REVERTED - no swap occurred (gas was still spent).`;
       return {
         content: [{
           type: "text",
           text: [
-            `✅ Swap executed!`,
-            `${amount} ${fromToken.toUpperCase()} → ${buyAmountHuman} ${q.buyToken}`,
+            header,
+            `${amount} ${fromToken.toUpperCase()} → ${receipt.mined && receipt.ok ? buyAmountHuman : "(quoted, not received)"} ${q.buyToken}`,
             `Slippage cap: ${slippageLimit}% · Price impact: ${impactPct.toFixed(3)}%`,
             `Tx Hash: \`${txHash}\``,
             `https://basescan.org/tx/${txHash}`,
-          ].join("\n"),
+            !receipt.mined ? `Check the link above before telling the user this succeeded or failed.` : "",
+          ].filter(Boolean).join("\n"),
         }],
+        isError: receipt.mined && !receipt.ok,
       };
     }
 
@@ -163,11 +199,24 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
       const result = await callConvex("/mcp/defi/send", "POST", parsed.data, "send_token");
       if (!result.success) return { content: [{ type: "text", text: `Send failed: ${result.error}` }], isError: true };
       const txHash = await signAndBroadcast(wallet, result.txData);
+      const receipt = await waitForReceipt(txHash);
+      const header = !receipt.mined
+        ? `⏳ Broadcast, not yet confirmed within the wait window.`
+        : receipt.ok
+          ? `✅ Sent - confirmed on-chain (block ${receipt.blockNumber}).`
+          : `❌ Transaction REVERTED - funds were NOT sent (gas was still spent).`;
       return {
         content: [{
           type: "text",
-          text: [`✅ Sent!`, `${amount} ${token.toUpperCase()} → \`${toAddress}\``, `Tx Hash: \`${txHash}\``, `https://basescan.org/tx/${txHash}`].join("\n"),
+          text: [
+            header,
+            `${amount} ${token.toUpperCase()} → \`${toAddress}\``,
+            `Tx Hash: \`${txHash}\``,
+            `https://basescan.org/tx/${txHash}`,
+            !receipt.mined ? `Check the link above before telling the user this succeeded or failed.` : "",
+          ].filter(Boolean).join("\n"),
         }],
+        isError: receipt.mined && !receipt.ok,
       };
     }
 
@@ -259,6 +308,7 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
               `Try lowering \`minApy\` or removing the token filter.`,
             ].join("\n"),
           }],
+          structuredContent: buildDefiYields(token, minApy, []),
         };
       }
 
@@ -285,7 +335,7 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
 
       lines.push(``, `Use \`swap_tokens\` to position, then deposit via the protocol's UI. Always check smart contract risk before depositing.`);
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildDefiYields(token, minApy, filtered) };
     }
 
     default:
