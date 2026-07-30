@@ -73,13 +73,20 @@ function toAnthropicTool(tool: any) {
   };
 }
 
-async function runAnthropicLoop(
-  apiKey: string,
+// Shared loop body for any provider that speaks Anthropic's native
+// content-block format (tool_use/tool_result) - runAnthropicLoop (direct
+// api.anthropic.com) and runConvexProxiedLoop (same wire format via Finch's
+// /llm/complete proxy) previously duplicated this ~70-line body verbatim,
+// with only the transport (sendTurn/sendFinal) differing. Keeping one copy
+// means a future fix (retry-on-5xx, tool-result truncation, etc.) can't be
+// applied to one provider and silently miss the other.
+async function runAnthropicStyleLoop(
+  sendTurn: (messages: any[], tools: any[]) => Promise<{ content: any[]; stop_reason: string }>,
+  sendFinal: (messages: any[]) => Promise<string>,
   userMessage: string,
   history: ChatMessage[],
   onToolCall: (name: string) => void,
 ): Promise<AgentResult> {
-  const model = process.env.FINCH_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
   const tools = ALL_TOOLS.map(toAnthropicTool);
   const toolCalls: Array<{ name: string }> = [];
 
@@ -89,23 +96,7 @@ async function runAnthropicLoop(
   ];
 
   for (let turn = 0; turn < 10; turn++) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({ model, max_tokens: 4096, system: SYSTEM_PROMPT, tools, messages }),
-      signal: AbortSignal.timeout(90_000),
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Anthropic ${res.status}: ${body.slice(0, 300)}`);
-    }
-
-    const data = await res.json() as any;
+    const data = await sendTurn(messages, tools);
     messages.push({ role: "assistant", content: data.content });
 
     if (data.stop_reason !== "tool_use") {
@@ -146,21 +137,48 @@ async function runAnthropicLoop(
   // Hit the turn cap without a final answer - rather than hand back nothing,
   // force one more call with no tools available so the model has to
   // synthesize a real answer from whatever it already gathered.
-  return finishWithoutTools(
-    async (msgs) => {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model, max_tokens: 4096, system: SYSTEM_PROMPT, messages: msgs }),
-        signal: AbortSignal.timeout(90_000),
-      });
-      if (!res.ok) return "";
-      const data = await res.json() as any;
-      return ((data.content as any[]) ?? []).filter(b => b.type === "text").map(b => b.text).join("");
-    },
-    messages,
-    toolCalls,
-  );
+  return finishWithoutTools(sendFinal, messages, toolCalls);
+}
+
+function runAnthropicLoop(
+  apiKey: string,
+  userMessage: string,
+  history: ChatMessage[],
+  onToolCall: (name: string) => void,
+): Promise<AgentResult> {
+  const model = process.env.FINCH_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+
+  const sendTurn = async (messages: any[], tools: any[]) => {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({ model, max_tokens: 4096, system: SYSTEM_PROMPT, tools, messages }),
+      signal: AbortSignal.timeout(90_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Anthropic ${res.status}: ${body.slice(0, 300)}`);
+    }
+    return await res.json() as any;
+  };
+
+  const sendFinal = async (msgs: any[]) => {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model, max_tokens: 4096, system: SYSTEM_PROMPT, messages: msgs }),
+      signal: AbortSignal.timeout(90_000),
+    });
+    if (!res.ok) return "";
+    const data = await res.json() as any;
+    return ((data.content as any[]) ?? []).filter(b => b.type === "text").map(b => b.text).join("");
+  };
+
+  return runAnthropicStyleLoop(sendTurn, sendFinal, userMessage, history, onToolCall);
 }
 
 // Shared turn-cap fallback: rather than "Reached max tool iterations." with
@@ -188,76 +206,25 @@ async function finishWithoutTools(
 
 // ── Convex-proxied Anthropic loop (session token only - platform covers LLM) ──
 
-async function runConvexProxiedLoop(
+function runConvexProxiedLoop(
   userMessage: string,
   history: ChatMessage[],
   onToolCall: (name: string) => void,
 ): Promise<AgentResult> {
   const model = process.env.FINCH_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
-  const tools = ALL_TOOLS.map(toAnthropicTool);
-  const toolCalls: Array<{ name: string }> = [];
 
-  const messages: any[] = [
-    ...history.map(h => ({ role: h.role, content: h.content })),
-    { role: "user", content: userMessage },
-  ];
+  // callConvex handles wallet/session auth automatically; 90s timeout matches the proxy endpoint
+  const sendTurn = (messages: any[], tools: any[]) =>
+    callConvex("/llm/complete", "POST", { model, max_tokens: 4096, system: SYSTEM_PROMPT, tools, messages }, "llm_complete", 90_000);
 
-  for (let turn = 0; turn < 10; turn++) {
-    // callConvex handles wallet/session auth automatically; 90s timeout matches the proxy endpoint
+  const sendFinal = async (msgs: any[]) => {
     const data = await callConvex("/llm/complete", "POST", {
-      model,
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      tools,
-      messages,
+      model, max_tokens: 4096, system: SYSTEM_PROMPT, messages: msgs,
     }, "llm_complete", 90_000);
+    return ((data.content as any[]) ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+  };
 
-    messages.push({ role: "assistant", content: data.content });
-
-    if (data.stop_reason !== "tool_use") {
-      const text = (data.content as any[])
-        .filter(b => b.type === "text")
-        .map(b => b.text)
-        .join("");
-      return { text, toolCalls };
-    }
-
-    const toolResults: any[] = [];
-    for (const block of data.content as any[]) {
-      if (block.type !== "tool_use") continue;
-
-      let resultText: string;
-      try {
-        const handler = HANDLER_MAP.get(block.name);
-        if (!handler) throw new Error(`Unknown tool: ${block.name}`);
-        // Recorded only once the handler is confirmed to exist - an "Unknown
-        // tool" miss is a model error, not a real tool execution, and callers
-        // reading AgentResult.toolCalls should be able to trust every entry
-        // actually ran.
-        onToolCall(block.name);
-        toolCalls.push({ name: block.name });
-        const result = await handler(block.name, block.input ?? {});
-        resultText = result?.content?.[0]?.text ?? "Done.";
-      } catch (err: any) {
-        resultText = `Error: ${err.message}`;
-      }
-
-      toolResults.push({ type: "tool_result", tool_use_id: block.id, content: resultText });
-    }
-
-    messages.push({ role: "user", content: toolResults });
-  }
-
-  return finishWithoutTools(
-    async (msgs) => {
-      const data = await callConvex("/llm/complete", "POST", {
-        model, max_tokens: 4096, system: SYSTEM_PROMPT, messages: msgs,
-      }, "llm_complete", 90_000);
-      return ((data.content as any[]) ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
-    },
-    messages,
-    toolCalls,
-  );
+  return runAnthropicStyleLoop(sendTurn, sendFinal, userMessage, history, onToolCall);
 }
 
 // ── Bankr (OpenAI-compatible) agent loop ─────────────────────────────────────
