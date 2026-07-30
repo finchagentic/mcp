@@ -4,6 +4,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { callConvex } from "../convex.js";
 import { callLLM } from "../llm.js";
 import { ToolResult } from "../types.js";
+import { getLocalVaultConfig, localVaultSave, localVaultRead, localVaultHistory } from "../local-vault.js";
 
 // ─── Agent Learning Memory (v3.25) ──────────────────────────────────────────
 // After every agent_update, an LLM reviews the new progress in context of the
@@ -46,7 +47,7 @@ async function extractLearning(
   // immediately rather than proxying through Finch (BYOK is required), and
   // the catch below swallows that into a silent skip. This early return just
   // avoids building the prompt for a call we already know will fail.
-  const hasLLM = !!(process.env.BANKR_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.GROK_API_KEY);
+  const hasLLM = !!(process.env.BANKR_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GROK_API_KEY);
   if (!hasLLM && !process.env.FINCH_SESSION_TOKEN) {
     return null;
   }
@@ -479,7 +480,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
       updates: [],
     }, null, 2);
 
-    const data = await callConvex("/vault/save", "POST", {
+    const savePayload = {
       type:    "memory",
       key:     `agent/${agentName}`,
       title:   `Agent: ${agentName}`,
@@ -488,11 +489,15 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
       agentId: agentName,
       tags:    ["persistent-agent"],
       commitMsg: "spawned",
-    }, "vault_save") as { key?: string; version?: number; error?: string };
+    };
+    const localVault = getLocalVaultConfig();
+    const data = localVault
+      ? localVaultSave(localVault, savePayload)
+      : await callConvex("/vault/save", "POST", savePayload, "vault_save") as { key?: string; version?: number; error?: string };
 
-    if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+    if ((data as any).error) return { content: [{ type: "text", text: `Error: ${(data as any).error}` }], isError: true };
     return {
-      content: [{ type: "text", text: `🤖 Agent **${agentName}** spawned.\n\n**Goal:** ${goal}\n\nRecall with \`agent_recall\` · Update progress with \`agent_update\`` }],
+      content: [{ type: "text", text: `🤖 Agent **${agentName}** spawned${localVault ? " locally" : ""}.\n\n**Goal:** ${goal}\n\nRecall with \`agent_recall\` · Update progress with \`agent_update\`` }],
     };
   }
 
@@ -500,9 +505,15 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
     const parsed = RecallAgentSchema.safeParse(args);
     if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
 
-    const data = await callConvex(`/vault/entry?key=agent/${parsed.data.name}`, "GET", undefined, "vault_read") as {
-      key?: string; content?: string; version?: number; updatedAt?: number; error?: string;
-    };
+    const localVault = getLocalVaultConfig();
+    let data: { key?: string; content?: string; version?: number; updatedAt?: number; error?: string };
+    try {
+      data = localVault
+        ? localVaultRead(localVault, `agent/${parsed.data.name}`)
+        : await callConvex(`/vault/entry?key=agent/${parsed.data.name}`, "GET", undefined, "vault_read") as typeof data;
+    } catch {
+      data = { error: "not found" };
+    }
 
     if (data.error || !data.content) {
       return { content: [{ type: "text", text: `Agent \`${parsed.data.name}\` not found. Spawn it first with \`agent_spawn\`.` }], isError: true };
@@ -547,11 +558,17 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
     const { name: agentName, progress, findings, status = "active", nextStep } = parsed.data;
 
     return withAgentLock(agentName, async () => {
+      const localVault = getLocalVaultConfig();
       // Load current state - inside the lock so two parallel updates can't
       // both read v=N and both write v=N+1 (the second silently loses).
-      const current = await callConvex(`/vault/entry?key=agent/${agentName}`, "GET", undefined, "vault_read") as {
-        content?: string; error?: string;
-      };
+      let current: { content?: string; error?: string };
+      try {
+        current = localVault
+          ? localVaultRead(localVault, `agent/${agentName}`)
+          : await callConvex(`/vault/entry?key=agent/${agentName}`, "GET", undefined, "vault_read") as typeof current;
+      } catch {
+        current = { error: "not found" };
+      }
       if (current.error || !current.content) {
         return { content: [{ type: "text", text: `Agent \`${agentName}\` not found. Spawn it first.` }], isError: true };
       }
@@ -586,7 +603,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
         state.learnings = [...(state.learnings ?? []), entry].slice(-MAX_LEARNINGS);
       }
 
-      const data = await callConvex("/vault/save", "POST", {
+      const savePayload = {
         type:    "memory",
         key:     `agent/${agentName}`,
         title:   `Agent: ${agentName}`,
@@ -594,9 +611,12 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
         contentType: "json",
         agentId: agentName,
         commitMsg: `[${status}] ${progress.slice(0, 60)}${newLearning ? " · +learning" : ""}`,
-      }, "vault_save") as { key?: string; version?: number; error?: string };
+      };
+      const data = localVault
+        ? localVaultSave(localVault, savePayload)
+        : await callConvex("/vault/save", "POST", savePayload, "vault_save") as { key?: string; version?: number; error?: string };
 
-      if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+      if ((data as any).error) return { content: [{ type: "text", text: `Error: ${(data as any).error}` }], isError: true };
 
       const statusEmoji = status === "complete" ? "✅" : status === "blocked" ? "🚫" : "🔄";
       const learningLine = newLearning
@@ -613,14 +633,22 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
     if (!agentName) return { content: [{ type: "text", text: "name is required" }], isError: true };
 
     const cap = Math.min(Math.max(1, limit), 50);
-    const data = await callConvex(
-      `/vault/history?key=agent/${encodeURIComponent(agentName)}&limit=${cap}`,
-      "GET", undefined, "vault_history",
-    ) as { history?: Array<{ version: number; commitMsg?: string; createdAt?: number }>; error?: string };
+    const localVault = getLocalVaultConfig();
+    let data: { history?: Array<{ version: number; commitMsg?: string; createdAt?: number }>; error?: string };
+    try {
+      data = localVault
+        ? localVaultHistory(localVault, `agent/${agentName}`)
+        : await callConvex(
+            `/vault/history?key=agent/${encodeURIComponent(agentName)}&limit=${cap}`,
+            "GET", undefined, "vault_history",
+          ) as typeof data;
+    } catch {
+      data = { history: [] };
+    }
 
     if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
 
-    const versions = data.history ?? [];
+    const versions = (data.history ?? []).slice(0, cap);
     if (!versions.length) {
       return { content: [{ type: "text", text: `No ledger entries found for agent \`${agentName}\`. Spawn it first with \`agent_spawn\`.` }], structuredContent: buildAgentLedger(agentName, []) };
     }

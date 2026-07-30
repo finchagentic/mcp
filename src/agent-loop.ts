@@ -121,13 +121,16 @@ async function runAnthropicLoop(
     for (const block of data.content as any[]) {
       if (block.type !== "tool_use") continue;
 
-      onToolCall(block.name);
-      toolCalls.push({ name: block.name });
-
       let resultText: string;
       try {
         const handler = HANDLER_MAP.get(block.name);
         if (!handler) throw new Error(`Unknown tool: ${block.name}`);
+        // Recorded only once the handler is confirmed to exist - an "Unknown
+        // tool" miss is a model error, not a real tool execution, and callers
+        // reading AgentResult.toolCalls should be able to trust every entry
+        // actually ran.
+        onToolCall(block.name);
+        toolCalls.push({ name: block.name });
         const result = await handler(block.name, block.input ?? {});
         resultText = result?.content?.[0]?.text ?? "Done.";
       } catch (err: any) {
@@ -223,13 +226,16 @@ async function runConvexProxiedLoop(
     for (const block of data.content as any[]) {
       if (block.type !== "tool_use") continue;
 
-      onToolCall(block.name);
-      toolCalls.push({ name: block.name });
-
       let resultText: string;
       try {
         const handler = HANDLER_MAP.get(block.name);
         if (!handler) throw new Error(`Unknown tool: ${block.name}`);
+        // Recorded only once the handler is confirmed to exist - an "Unknown
+        // tool" miss is a model error, not a real tool execution, and callers
+        // reading AgentResult.toolCalls should be able to trust every entry
+        // actually ran.
+        onToolCall(block.name);
+        toolCalls.push({ name: block.name });
         const result = await handler(block.name, block.input ?? {});
         resultText = result?.content?.[0]?.text ?? "Done.";
       } catch (err: any) {
@@ -312,14 +318,15 @@ async function runOpenAICompatibleLoop(
     }
 
     for (const call of choice.tool_calls) {
-      onToolCall(call.function.name);
-      toolCalls.push({ name: call.function.name });
-
       let resultText: string;
       try {
         const args = JSON.parse(call.function.arguments ?? "{}");
         const handler = HANDLER_MAP.get(call.function.name);
         if (!handler) throw new Error(`Unknown tool: ${call.function.name}`);
+        // Recorded only once the handler is confirmed to exist - see the
+        // matching comment in runAnthropicLoop/runConvexProxiedLoop.
+        onToolCall(call.function.name);
+        toolCalls.push({ name: call.function.name });
         const result = await handler(call.function.name, args);
         resultText = result?.content?.[0]?.text ?? "Done.";
       } catch (err: any) {

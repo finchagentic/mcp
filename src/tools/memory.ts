@@ -1031,7 +1031,11 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       }
 
       // ── PASS 1: fetch every memory on the topic, numbered ───────────────
-      const rows = await searchSupermemory(topic, limit);
+      // Uses the same RRF-fused semantic+lexical retrieval as memory_search/
+      // memory_context - a plain single-source searchSupermemory() call here
+      // used to mean consolidation could miss memories only the lexical/BM25
+      // side would surface, while still claiming an exhaustive "N memories".
+      const rows = await hybridMemorySearch(topic, limit);
       if (rows.length === 0) {
         return { content: [{ type: "text", text: `No memories found for "${topic}" to consolidate.` }], isError: true };
       }
