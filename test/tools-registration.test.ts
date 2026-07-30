@@ -63,7 +63,6 @@ describe("tool annotations", () => {
     const mustBeDestructive = [
       "base_mcp_send",
       "base_mcp_swap",
-      "base_mcp_lend",
       "rh_mcp_swap",
       "rh_dca_create",
       "rh_bracket_create",
@@ -94,6 +93,11 @@ describe("tool annotations", () => {
       "hire_agent", // returns a persona, does not write
       "rh_safety_check",
       "base_mcp_estimate",
+      // Returns deposit INSTRUCTIONS only (protocol/vault/APY) - never
+      // broadcasts, same class as base_mcp_estimate above. A prior version
+      // of this test wrongly required it be flagged destructive on the
+      // assumption "lend" implies a fund move; it doesn't.
+      "base_mcp_lend",
     ];
     for (const name of mustBeReadOnly) {
       expect(annotationsFor(name).readOnlyHint, `${name} should be read-only`).toBe(true);

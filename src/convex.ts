@@ -118,10 +118,14 @@ export async function callConvexRaw(path: string, toolName = "unknown", timeoutM
 
   const apiKey       = process.env.FINCH_API_KEY;
   const sessionToken = getSavedToken();
-  const authHeader   = apiKey
-    ? `Bearer ${apiKey}`
-    : sessionToken
+  // Same precedence as callConvex() above - prefer session token over API
+  // key. These two functions previously disagreed (this one checked apiKey
+  // first), so the same env/config could pick a different credential
+  // depending on which helper a tool happened to call.
+  const authHeader   = sessionToken
     ? `Bearer ${sessionToken}`
+    : apiKey
+    ? `Bearer ${apiKey}`
     : null;
   if (authHeader) {
     headers["Authorization"] = authHeader;

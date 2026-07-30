@@ -1055,6 +1055,7 @@ async function quoteRh(args: {
   amount: string;
   maxSlippagePct?: number;
   taker: string;
+  toolName?: string;
 }): Promise<any> {
   const from = await resolveTokenSmart(args.fromToken);
   const to = await resolveTokenSmart(args.toToken);
@@ -1075,7 +1076,7 @@ async function quoteRh(args: {
       fromSymbol: from.symbol,
       toSymbol: to.symbol,
     },
-    "rh_mcp_estimate"
+    args.toolName ?? "rh_mcp_estimate"
   );
   if (result.error) throw new Error(result.error);
   return { ...result, from, to, sellAmount, slippageBps };
@@ -1393,6 +1394,7 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
           amount: String(a.amount),
           maxSlippagePct: a.maxSlippagePct,
           taker: wallet.address,
+          toolName: "rh_mcp_swap",
         });
         const quote = q.quote ?? q;
         const tx = quote.transaction ?? {

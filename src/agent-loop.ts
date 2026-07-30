@@ -40,17 +40,25 @@ export async function runAgent(
   const bankrKey     = process.env.BANKR_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const openaiKey    = process.env.OPENAI_API_KEY;
+  const grokKey      = process.env.GROK_API_KEY;
 
   // Explicit override - lets FINCH_PROVIDER=openai win even when BANKR_API_KEY
   // is also set (e.g. as a persistent shell env var), same as llm.ts's callLLM.
   if (provider === "bankr" && bankrKey)         return runBankrLoop(bankrKey, userMessage, history, onToolCall);
   if (provider === "anthropic" && anthropicKey) return runAnthropicLoop(anthropicKey, userMessage, history, onToolCall);
   if (provider === "openai" && openaiKey)       return runOpenAILoop(openaiKey, userMessage, history, onToolCall);
+  if (provider === "grok" && grokKey)           return runGrokLoop(grokKey, userMessage, history, onToolCall);
 
-  // Auto-priority
+  // Auto-priority - matches llm.ts's callLLM() order exactly (bankr →
+  // anthropic → openai → grok → Convex proxy) so a one-shot LLM tool call
+  // (ask_finch, memory extraction, etc.) and the interactive agent loop
+  // never silently pick different providers for the same configured keys.
+  // A GROK_API_KEY-only user used to fall all the way through to the
+  // Convex-proxied Anthropic loop here despite callLLM() using Grok.
   if (bankrKey)     return runBankrLoop(bankrKey, userMessage, history, onToolCall);
   if (anthropicKey) return runAnthropicLoop(anthropicKey, userMessage, history, onToolCall);
   if (openaiKey)    return runOpenAILoop(openaiKey, userMessage, history, onToolCall);
+  if (grokKey)      return runGrokLoop(grokKey, userMessage, history, onToolCall);
 
   // No direct key - proxy through Finch backend. Wallet auto-creates at ~/.finch/wallet.json
   // on first use and signs requests transparently. No account or config needed.
@@ -123,7 +131,14 @@ async function runAnthropicStyleLoop(
         onToolCall(block.name);
         toolCalls.push({ name: block.name });
         const result = await handler(block.name, block.input ?? {});
-        resultText = result?.content?.[0]?.text ?? "Done.";
+        // A handler returning null (a name declared in its *_TOOLS array with
+        // no matching branch - a latent bug ruled out today but not
+        // structurally prevented) must not fall through to "Done." - that
+        // would report success to the model for a call that never actually
+        // ran, directly contradicting this loop's own system-prompt rule
+        // against claiming an unverified result.
+        if (result === null) throw new Error(`Tool ${block.name} returned no result (handler bug - not executed)`);
+        resultText = result.content?.[0]?.text ?? "Done.";
       } catch (err: any) {
         resultText = `Error: ${err.message}`;
       }
@@ -358,6 +373,26 @@ async function runOpenAILoop(
     { Authorization: `Bearer ${apiKey}` },
     model,
     "OpenAI",
+    userMessage,
+    history,
+    onToolCall,
+  );
+}
+
+// xAI's Chat Completions API is OpenAI-compatible (same as llm.ts's callGrok),
+// so this reuses runOpenAICompatibleLoop rather than a bespoke loop.
+async function runGrokLoop(
+  apiKey: string,
+  userMessage: string,
+  history: ChatMessage[],
+  onToolCall: (name: string) => void,
+): Promise<AgentResult> {
+  const model = process.env.FINCH_MODEL ?? process.env.FINCH_GROK_MODEL ?? process.env.GROK_MODEL ?? "grok-4-fast-reasoning";
+  return runOpenAICompatibleLoop(
+    "https://api.x.ai/v1/chat/completions",
+    { Authorization: `Bearer ${apiKey}` },
+    model,
+    "Grok",
     userMessage,
     history,
     onToolCall,

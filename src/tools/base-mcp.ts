@@ -499,19 +499,6 @@ export async function handleBaseMcpTool(name: string, args: unknown): Promise<To
       };
     }
 
-    case "base_mcp_analyze": {
-      // Resolve basename if input is a name
-      let address = a.address;
-      if (typeof a.address === "string" && !/^0x[a-fA-F0-9]{40}$/.test(a.address)) {
-        const resolved = await resolveBasename(a.address);
-        if (resolved.error || !resolved.address) {
-          return { content: [{ type: "text", text: `Could not resolve "${a.address}": ${resolved.error ?? "unknown"}` }], isError: true };
-        }
-        address = resolved.address;
-      }
-      return handleDefiTool("analyze_wallet", { address, label: a.label });
-    }
-
     default:
       return null;
   }

@@ -48,7 +48,6 @@ const WRITE_IDEMPOTENT = new Set<string>([
   "vault_pin",
   "vault_tag",
   "vault_unpublish",
-  "wallet_sign_message", // signing is not itself a fund move; re-sign = same sig
 ]);
 
 // readOnly=false, destructive=false.
@@ -64,7 +63,6 @@ const WRITE = new Set<string>([
   "memory_extract",
   "memory_consolidate",
   "packet_create",
-  "packet_share",
   "schedule_research",
   "vault_save",
   "vault_store_credential",
@@ -85,10 +83,18 @@ const DESTRUCTIVE = new Set<string>([
   "vault_delete",
   // irreversible public exposure
   "memory_publish", // "IRREVERSIBLE, PUBLIC" per its own description
+  "packet_share", // "copies already taken remain" per its own description - same risk class as memory_publish
   // money movement (Base)
+  // NOTE: base_mcp_lend deliberately excluded - per its own description it
+  // "Returns deposit INSTRUCTIONS only... Does NOT broadcast" - it's a read,
+  // not a fund move, so it falls through to the read-only default below.
   "base_mcp_send",
   "base_mcp_swap",
-  "base_mcp_lend",
+  // off-chain signature that can itself authorise value movement (order,
+  // session login) without any on-chain tx - same risk class as a real
+  // transfer per its own tool description, so it belongs here rather than
+  // in WRITE_IDEMPOTENT ("re-sign = same sig" is true but undersells the risk)
+  "wallet_sign_message",
   // money movement (Robinhood Chain)
   "rh_mcp_swap",
   "rh_dca_create", // arms recurring real buys
