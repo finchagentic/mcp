@@ -243,7 +243,7 @@ export const AGENT_TOOLS: Tool[] = [
     name: "agent_schedule",
     description:
       "Attach an autonomous schedule to an existing agent. The agent wakes up on cron cadence, executes a workflow, " +
-      "saves the result to vault under `agent/<name>/runs/<date>`, and optionally pings you on Telegram. " +
+      "saves the result to vault under `agent/<name>/runs/<date>`. " +
       "Workflows: " +
       "deep_research (LLM brief on agent's goal) · " +
       "packet (run a named packet) · " +

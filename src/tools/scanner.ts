@@ -119,6 +119,109 @@ function scoreDipReversal(c: Candidate, minLiquidity = DEFAULT_MIN_LIQ): ScoreRe
   };
 }
 
+// ── Structured output builders (MCP outputSchema payloads) ──────────────────
+// Pure functions so both the human-readable text and the machine-readable
+// `structuredContent` derive from one source, and so they can be unit-tested
+// without a network round-trip.
+
+export function buildScoreStructured(address: string, c: Candidate, result: ScoreResult) {
+  return {
+    address,
+    symbol:       c.symbol,
+    priceUsd:     c.priceUsd,
+    liquidityUsd: c.liquidity,
+    score:        result.score,
+    pattern:      result.pattern,
+    passed:       result.passed,
+    gateFailures: result.gateFailures,
+    breakdown:    result.breakdown,
+  };
+}
+
+export function buildScanResults(mode: string, scanned: number, scored: any[]): Record<string, unknown> {
+  // Map the full result set (the text view truncates to 10 for readability;
+  // structured output carries everything so count === results.length, matching
+  // every other list builder).
+  return {
+    mode,
+    scanned,
+    count: scored.length,
+    results: scored.map((c) => ({
+      symbol: c.symbol,
+      address: c.mint,
+      score: c.score,
+      pattern: c.pattern ?? null,
+      priceUsd: c.priceUsd ?? null,
+      liquidityUsd: c.liquidity ?? null,
+      priceChange5m: c.priceChange5m ?? null,
+      priceChange1h: c.priceChange1h ?? null,
+      priceChange6h: c.priceChange6h ?? null,
+      priceChange24h: c.priceChange24h ?? null,
+      buyPressure5m: c.buyPressure5m ?? null,
+      volume1h: c.volume1h ?? null,
+    })),
+  };
+}
+
+export interface TokenSecurity {
+  verdict:      "DANGER" | "CAUTION" | "SAFE" | "UNSCANNED";
+  rugScore:     number;
+  isHoneypot:   boolean;
+  isMintable:   boolean;
+  isFreezeAuth: boolean;
+  isOpenSource: boolean;
+  lpLockedPct:  number;
+  buyTax:       number;
+  sellTax:      number;
+  holderCount:  number | null;
+}
+
+// GoPlusLabs token_security payload → normalized verdict. Extracted verbatim
+// from the check_token handler so the text report and structuredContent can't
+// drift apart.
+export function assessTokenSecurity(info: any): TokenSecurity {
+  // GoPlusLabs returns HTTP 200 with an empty {} for a contract it has no
+  // record of (too new to be indexed yet, wrong address, etc.) - every field
+  // below defaults to "not risky" in that case, which previously produced a
+  // rugScore of 20 and a "SAFE" verdict for a token that was NEVER actually
+  // scanned. That's the exact class of token this tool exists to protect
+  // against (score_token/scan_market point brand-new tokens here first).
+  if (!info || Object.keys(info).length === 0) {
+    return {
+      verdict: "UNSCANNED", rugScore: -1, isHoneypot: false, isMintable: false,
+      isFreezeAuth: false, isOpenSource: false, lpLockedPct: 0, buyTax: 0, sellTax: 0, holderCount: null,
+    };
+  }
+
+  const isHoneypot   = info.is_honeypot      === "1";
+  const isMintable   = info.is_mintable      === "1";
+  const isFreezeAuth = info.transfer_pausable === "1";
+  const isOpenSource = info.is_open_source   === "1";
+
+  const lpLockedPct = ((info.lp_holders ?? []) as any[])
+    .filter(h => h.is_locked)
+    .reduce((s, h) => s + parseFloat(h.percent ?? "0"), 0) * 100;
+
+  const buyTax  = parseFloat(info.buy_tax  ?? "0");
+  const sellTax = parseFloat(info.sell_tax ?? "0");
+
+  let rugScore = 0;
+  if (isHoneypot)       rugScore += 50; // cannot sell → auto-danger
+  if (isMintable)       rugScore += 30; // unlimited supply risk
+  if (isFreezeAuth)     rugScore += 30; // transfers can be blocked
+  if (lpLockedPct < 50) rugScore += 20; // LP can be pulled
+  if (sellTax > 10)     rugScore += 15; // high sell tax
+  rugScore = Math.min(100, rugScore);
+
+  const verdict = (isHoneypot || rugScore >= 60) ? "DANGER"
+    : rugScore >= 30 ? "CAUTION"
+    : "SAFE";
+
+  const holderCount = info.holder_count != null ? Number(info.holder_count) : null;
+
+  return { verdict, rugScore, isHoneypot, isMintable, isFreezeAuth, isOpenSource, lpLockedPct, buyTax, sellTax, holderCount };
+}
+
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
 // All external scanner calls flow through cachedFetch - adds 45s LRU caching
 // + 429 backoff. GeckoTerminal and DexScreener both throttle aggressively;
@@ -250,13 +353,8 @@ function scoreMomentum(c: Candidate, minLiquidity = DEFAULT_MIN_LIQ): MomentumRe
 const AddressSchema    = z.string().regex(/^0x[0-9a-fA-F]{40}$/, "must be a valid 0x address");
 const ScoreTokenSchema = z.object({ address: AddressSchema, minLiquidity: z.number().positive().optional() });
 const CheckTokenSchema = z.object({ address: AddressSchema });
+// scan_market validates both modes (dips/momentum) with the same shape.
 const ScanDipsSchema   = z.object({
-  minScore:     z.number().min(0).max(100).optional(),
-  minLiquidity: z.number().positive().optional(),
-  limit:        z.number().int().min(1).max(100).optional(),
-}).default({});
-
-const ScanMomentumSchema = z.object({
   minScore:     z.number().min(0).max(100).optional(),
   minLiquidity: z.number().positive().optional(),
   limit:        z.number().int().min(1).max(100).optional(),
@@ -379,7 +477,10 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
       lines.push(``, `Run \`check_token address="${address}"\` for a rug/security check before buying.`);
     }
 
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return {
+      content: [{ type: "text", text: lines.join("\n") }],
+      structuredContent: buildScoreStructured(address, c, result),
+    };
   }
 
   // ── check_token ────────────────────────────────────────────────────────────
@@ -395,31 +496,27 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
     );
     const info = data.result?.[address.toLowerCase()] ?? data.result?.[address] ?? {};
 
-    const isHoneypot   = info.is_honeypot     === "1";
-    const isMintable   = info.is_mintable     === "1";
-    const isFreezeAuth = info.transfer_pausable === "1";
-    const isOpenSource = info.is_open_source   === "1";
+    const sec = assessTokenSecurity(info);
+    const { verdict, rugScore, isHoneypot, isMintable, isFreezeAuth, isOpenSource, lpLockedPct, buyTax, sellTax } = sec;
 
-    // LP lock: sum of all locked LP holders
-    const lpLockedPct = ((info.lp_holders ?? []) as any[])
-      .filter(h => h.is_locked)
-      .reduce((s, h) => s + parseFloat(h.percent ?? "0"), 0) * 100;
-
-    const buyTax  = parseFloat(info.buy_tax  ?? "0");
-    const sellTax = parseFloat(info.sell_tax ?? "0");
-
-    // Rug score: accumulate risk factors
-    let rugScore = 0;
-    if (isHoneypot)       rugScore += 50; // cannot sell → auto-danger
-    if (isMintable)       rugScore += 30; // unlimited supply risk
-    if (isFreezeAuth)     rugScore += 30; // transfers can be blocked
-    if (lpLockedPct < 50) rugScore += 20; // LP can be pulled
-    if (sellTax > 10)     rugScore += 15; // high sell tax
-    rugScore = Math.min(100, rugScore);
-
-    const verdict = (isHoneypot || rugScore >= 60) ? "DANGER"
-      : rugScore >= 30 ? "CAUTION"
-      : "SAFE";
+    if (verdict === "UNSCANNED") {
+      return {
+        content: [{
+          type: "text",
+          text: [
+            `## Token Security Check`,
+            `\`${address}\``,
+            ``,
+            `**Verdict: ⚪ UNSCANNED** - GoPlusLabs has no record for this contract (too new to be indexed yet, or the address is wrong).`,
+            ``,
+            `This is NOT a clean bill of health - it means no security data exists to check at all. ` +
+            `Brand-new tokens (exactly what \`scan_market\` surfaces) are the most likely to hit this. ` +
+            `Treat as unverified: confirm the contract address is correct, wait and retry once the token is a few hours/days old, or skip it.`,
+          ].join("\n"),
+        }],
+        structuredContent: { address, ...sec },
+      };
+    }
 
     const icon = { DANGER: "🔴", CAUTION: "🟡", SAFE: "🟢" }[verdict];
 
@@ -450,7 +547,10 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
       lines.push(`**Passes basic security checks.** No critical red flags found. Always DYOR - security checks are not a guarantee.`);
     }
 
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return {
+      content: [{ type: "text", text: lines.join("\n") }],
+      structuredContent: { address, ...sec },
+    };
   }
 
   // ── scan_market ────────────────────────────────────────────────────────────
@@ -488,6 +588,7 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
               `When nothing breaks out, the market may be in consolidation. Try \`scan_market mode=dips\` instead.`,
             ].join("\n"),
           }],
+          structuredContent: buildScanResults("momentum", candidates.length, []),
         };
       }
 
@@ -507,7 +608,7 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
       }
       lines.push(`---`);
       lines.push(`Next steps: \`score_token\` · \`check_token\` for rug check`);
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildScanResults("momentum", candidates.length, scored) };
     }
 
     // mode === "dips"
@@ -527,6 +628,7 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
             `This is a signal in itself - try \`scan_market mode=momentum\` or check back in 5–10 minutes.`,
           ].join("\n"),
         }],
+        structuredContent: buildScanResults("dips", candidates.length, []),
       };
     }
 
@@ -547,7 +649,7 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
     }
     lines.push(`---`);
     lines.push(`Next steps: \`score_token\` for full breakdown · \`check_token\` for rug check`);
-    return { content: [{ type: "text", text: lines.join("\n") }] };
+    return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildScanResults("dips", candidates.length, scored) };
   }
 
   return null;

@@ -4,7 +4,7 @@ import { callConvex } from "../convex.js";
 import { ToolResult } from "../types.js";
 
 const TRIGGER_BASE = "https://api.trigger.dev/api/v1";
-const MONITOR_TASK_ID = "noelclaw-monitor";
+const MONITOR_TASK_ID = "finch-monitor";
 
 const MONITOR_INPUT_SCHEMA = {
   type: "object" as const,
@@ -23,8 +23,8 @@ export const MONITOR_TOOLS: Tool[] = [
   {
     name: "schedule_research",
     description:
-      "Schedule recurring autonomous research on any topic - runs on a cron schedule, saves findings to vault, " +
-      "and sends a Telegram notification. The agent runs completely on its own with no prompting needed. " +
+      "Schedule recurring autonomous research on any topic - runs on a cron schedule, saves findings to vault. " +
+      "The agent runs completely on its own with no prompting needed. " +
       "Requires TRIGGER_SECRET_KEY env var (trigger.dev). " +
       "Examples: daily morning briefing, weekly competitor analysis, hourly price alerts, monthly industry report.",
     inputSchema: MONITOR_INPUT_SCHEMA,
@@ -36,13 +36,17 @@ export const MONITOR_TOOLS: Tool[] = [
   },
   {
     name: "cancel_monitor",
-    description: "Cancel and delete a scheduled research monitor by its ID. Use list_monitors to get the ID.",
+    description:
+      "PERMANENT. Cancel and delete a scheduled research monitor — the schedule is removed and " +
+      "cannot be restored. Requires confirm: true. Run list_monitors first and show the user which " +
+      "monitor (id + topic) you are about to delete.",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "Monitor ID (from list_monitors)" },
+        confirm: { type: "boolean", description: "Must be true to delete. Guards against removing the wrong monitor." },
       },
-      required: ["id"],
+      required: ["id", "confirm"],
     },
   },
 ];
@@ -77,7 +81,7 @@ function noKeyMsg(): ToolResult {
         `1. Sign up at trigger.dev (free tier available)`,
         `2. Create a project, go to API Keys → copy your Secret Key`,
         `3. Add to your MCP config env block: \`"TRIGGER_SECRET_KEY": "tr_prod_..."\``,
-        `4. In the noelclaw worker directory, run: \`npx trigger.dev@latest deploy\``,
+        `4. In the finch worker directory, run: \`npx trigger.dev@latest deploy\``,
         ``,
         `Then monitors will run autonomously - no chat needed.`,
       ].join("\n"),
@@ -88,6 +92,27 @@ function noKeyMsg(): ToolResult {
 
 function resolveCron(input: string): string {
   return CRON_PRESETS[input] ?? input;
+}
+
+// Structured output builder for list_monitors (schema in output-schemas.ts).
+export function buildMonitorList(
+  schedules: any[],
+  configs: Record<string, { topic?: string; label?: string }> = {},
+): Record<string, unknown> {
+  return {
+    count: schedules.length,
+    monitors: schedules.map((s) => {
+      const cfg = s.externalId ? configs[s.externalId] : undefined;
+      return {
+        id: s.id ?? null,
+        externalId: s.externalId ?? null,
+        label: cfg?.label ?? s.externalId ?? s.id ?? null,
+        topic: cfg?.topic ?? null,
+        cron: s.cron ?? null,
+        nextRun: s.nextRun ?? null,
+      };
+    }),
+  };
 }
 
 export async function handleMonitorTool(name: string, args: unknown): Promise<ToolResult | null> {
@@ -109,7 +134,7 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
         "/vault/list",
         "POST",
         { type: "workflow", tags: ["monitor-config"] },
-        "list_monitors_for_dedup",
+        "vault_list",
       ) as { entries?: Array<{ key: string; content?: string }> } | null;
 
       const duplicates = (existingMonitors?.entries ?? []).filter((e) => {
@@ -203,7 +228,7 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
             data.nextRun ? `⏭️ Next run: ${new Date(data.nextRun).toUTCString()}` : "",
             ``,
             configSaved
-              ? `The agent will research "${topic}" on schedule, save findings to vault, and send a Telegram notification if configured.`
+              ? `The agent will research "${topic}" on schedule and save findings to vault.`
               : `⚠️ Monitor schedule created but config save failed - the agent may use a default topic on first run. Try \`cancel_monitor\` and recreate.`,
             `Use \`list_monitors\` to see all active monitors.`,
           ].filter(Boolean).join("\n"),
@@ -237,6 +262,7 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
             type: "text",
             text: `No active monitors.\n\nUse \`create_monitor\` to set up an autonomous agent that runs on a schedule.`,
           }],
+          structuredContent: buildMonitorList([]),
         };
       }
 
@@ -247,7 +273,9 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
           .filter(s => s.externalId)
           .map(async s => {
             try {
-              const cfg = await callConvex(`/vault/read?key=monitor-config/${s.externalId}`, "GET", undefined, "vault_read");
+              // `/vault/entry`, not `/vault/read` — the latter 404s, which this
+              // catch used to hide, leaving every monitor listed by raw id.
+              const cfg = await callConvex(`/vault/entry?key=monitor-config/${s.externalId}`, "GET", undefined, "vault_read");
               if (cfg?.content) {
                 const parsed = JSON.parse(cfg.content);
                 configMap.set(s.externalId, { topic: parsed.topic, label: parsed.label ?? parsed.topic });
@@ -268,7 +296,10 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
       }
       lines.push(`Use \`cancel_monitor id: "<id>"\` to stop a monitor.`);
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        structuredContent: buildMonitorList(schedules, Object.fromEntries(configMap)),
+      };
     } catch (err: any) {
       return { content: [{ type: "text", text: `List error: ${err.message}` }], isError: true };
     }
@@ -277,6 +308,17 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
   if (name === "cancel_monitor") {
     const parsed = CancelSchema.safeParse(args);
     if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    if ((args as { confirm?: boolean })?.confirm !== true) {
+      return {
+        content: [{
+          type: "text",
+          text:
+            "Refusing to cancel: this deletes the monitor's schedule permanently. Show the user " +
+            "which monitor it is (run `list_monitors`), then pass `confirm: true`.",
+        }],
+        isError: true,
+      };
+    }
     const key = getKey();
     if (!key) return noKeyMsg();
     const { id } = parsed.data;

@@ -5,11 +5,11 @@ import { getTier } from "../token-gate.js";
 import { getOrCreateWallet } from "../wallet.js";
 import { getLocalMemoryConfig, isLocalMemoryReachable, localMemoryProfile } from "../local-memory.js";
 
-const CONVEX_SITE = process.env.NOELCLAW_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
+const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
 
 export const OS_TOOLS: Tool[] = [
   {
-    name: "noel_status",
+    name: "finch_status",
     description:
       "Full runtime dashboard - memory size, persistent agents, active automations, recent vault research, " +
       "execution scores, and your tier. Like `htop` for your AI runtime. " +
@@ -17,21 +17,21 @@ export const OS_TOOLS: Tool[] = [
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
-    name: "noel_diagnostics",
+    name: "finch_diagnostics",
     description:
-      "Health check for all Noelclaw services - Convex backend, Firecrawl, Supermemory, and configured API keys. " +
+      "Health check for all Finch services - Convex backend, Firecrawl, Supermemory, and configured API keys. " +
       "Run this when something is broken or before starting a long research session to confirm everything is live. " +
       "Shows which env vars are set and which services are reachable.",
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
-    name: "noel_shell_chat",
+    name: "finch_shell_chat",
     description:
-      "Chat with Noel Shell — AI terminal with tool calling. Can spawn agents, save to vault, search memory, create automations, estimate swaps, list agents, and get wallet balance — all from a single prompt.",
+      "Chat with Finch Terminal — AI terminal with tool calling. Can spawn agents, save to vault, search memory, create automations, estimate swaps, list agents, and get wallet balance — all from a single prompt.",
     inputSchema: {
       type: "object",
       properties: {
-        message: { type: "string", description: "Your message or instruction to Noel Shell." },
+        message: { type: "string", description: "Your message or instruction to Finch Terminal." },
         agent_id: { type: "string", description: "Optional: specific agent ID to chat with (default: noel-default)." },
       },
       required: ["message"],
@@ -41,7 +41,7 @@ export const OS_TOOLS: Tool[] = [
 
 export async function handleOsTool(name: string, args: unknown): Promise<ToolResult | null> {
   switch (name) {
-    case "noel_status": {
+    case "finch_status": {
       // Respect local memory mode here too - querying Convex's /memory/profile
       // when writes have been going to a local supermemory server instead
       // would report a stale/zero count (the exact bug memory_profile's own
@@ -49,15 +49,15 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
       const localStatusCfg = getLocalMemoryConfig();
       const memoryProfileCall = localStatusCfg
         ? localMemoryProfile(localStatusCfg)
-        : callConvex("/memory/profile", "GET");
+        : callConvex("/memory/profile", "GET", undefined, "memory_profile");
 
       const [tierResult, walletResult, memRes, autoRes, vaultRes, agentsRes] = await Promise.allSettled([
         getTier(),
         getOrCreateWallet(),
         memoryProfileCall,
         callConvex("/automations/list", "GET", undefined, "list_automations"),
-        callConvex("/vault/list?type=research&limit=5", "GET", undefined, "noel_status"),
-        callConvex("/vault/list?type=memory&limit=20", "GET", undefined, "noel_status"),
+        callConvex("/vault/list?type=research&limit=5", "GET", undefined, "vault_list"),
+        callConvex("/vault/list?type=memory&limit=20", "GET", undefined, "vault_list"),
       ]);
 
       const tier   = tierResult.status   === "fulfilled" ? tierResult.value   : "basic";
@@ -77,13 +77,13 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
 
       const tierLabel = tier === "holder"
         ? "\u{1F7E2} **Holder**  - premium tools unlocked"
-        : "⚪ **Basic**   - hold NOELCLAW on Base to unlock premium tools";
+        : "⚪ **Basic**   - hold FINCH on Base to unlock premium tools";
       const walletShort = wallet
         ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`
         : "not configured";
 
       const lines = [
-        `**Noelclaw Runtime - System Status**`,
+        `**Finch Runtime - System Status**`,
         `────────────────────────────────`,
         ``,
         `🔑 **Tier**         ${tierLabel}`,
@@ -127,8 +127,8 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
 
-    case "noel_diagnostics": {
-      const CONVEX_URL = process.env.NOELCLAW_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
+    case "finch_diagnostics": {
+      const CONVEX_URL = process.env.FINCH_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
       // Ping root of each service — any non-5xx means the host is up
       const FC_URL = "https://api.firecrawl.dev";
       const SM_URL = "https://api.supermemory.ai";
@@ -152,9 +152,8 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
         "OPENAI_API_KEY":         !!process.env.OPENAI_API_KEY,
         "GROK_API_KEY":           !!process.env.GROK_API_KEY,
         "FIRECRAWL_API_KEY":      !!process.env.FIRECRAWL_API_KEY,
-        "NOELCLAW_SESSION_TOKEN": !!process.env.NOELCLAW_SESSION_TOKEN,
-        "NOELCLAW_API_KEY":       !!process.env.NOELCLAW_API_KEY,
-        "TELEGRAM_BOT_TOKEN":     !!process.env.TELEGRAM_BOT_TOKEN,
+        "FINCH_SESSION_TOKEN": !!process.env.FINCH_SESSION_TOKEN,
+        "FINCH_API_KEY":       !!process.env.FINCH_API_KEY,
       };
 
       const localMemCfg = getLocalMemoryConfig();
@@ -181,31 +180,44 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
       const llmConfigured = envKeys["BANKR_API_KEY"] || envKeys["ANTHROPIC_API_KEY"] || envKeys["OPENAI_API_KEY"] || envKeys["GROK_API_KEY"];
 
       const hints: string[] = [];
-      if (!llmConfigured) hints.push(`→ No LLM key set — deep_research, ask_noel, market_thesis, and agent tools won't work.`);
-      if (!envKeys["FIRECRAWL_API_KEY"]) hints.push(`→ No FIRECRAWL_API_KEY — deep_research falls back to Noelclaw proxy (requires session token).`);
-      if (!localMemCfg) hints.push(`→ Memory tools use the Noelclaw-hosted proxy. Run \`noelclaw setup\` for free, self-hosted local memory.`);
-      else if (localSmStatus !== "ok") hints.push(`→ Local memory configured but ${localMemCfg.url} isn't reachable — memory tools will fail. Run \`npx -y supermemory local\`.`);
+      // A missing LLM key is not a fault. Tools return evidence and structure
+      // for the calling model to reason over; they don't run inference. The
+      // key only matters when Finch itself has to *be* the model - the CLI
+      // agent loop and scheduled agents, which have no client attached.
+      if (!llmConfigured) {
+        hints.push(`→ No LLM key — that's fine. Every tool works without one; your client's model does the reasoning.`);
+        hints.push(`   A key is only needed for \`finch run\` (CLI agent loop), scheduled agents, and \`deep_research mode:"report"\`.`);
+      }
+      if (!envKeys["FIRECRAWL_API_KEY"]) hints.push(`→ No FIRECRAWL_API_KEY — deep_research falls back to Finch proxy (requires session token).`);
+      if (!localMemCfg) hints.push(`→ Memory tools use the Finch-hosted proxy. Run \`finch setup\` for free, self-hosted local memory.`);
+      else if (localMemCfg.kind === "supermemory" && localSmStatus !== "ok") hints.push(`→ Local memory configured but ${localMemCfg.url} isn't reachable — memory tools will fail. Run \`npx -y supermemory local\`.`);
+
+      const localMemLabel = !localMemCfg
+        ? "not configured — run `finch setup`"
+        : localMemCfg.kind === "file"
+        ? "file-based at ~/.finch/memory"
+        : localSmStatus === "ok" ? `reachable at ${localMemCfg.url}` : `configured but unreachable at ${localMemCfg.url}`;
 
       const lines = [
-        `## 🩺 Noelclaw Diagnostics`,
+        `## 🩺 Finch Diagnostics`,
         ``,
         `**Services:**`,
-        `  ${statusIcon(convexStatus)}  Convex backend       ${convexStatus === "ok" ? "reachable" : "unreachable — check NOELCLAW_CONVEX_URL"}`,
+        `  ${statusIcon(convexStatus)}  Convex backend       ${convexStatus === "ok" ? "reachable" : "unreachable — check FINCH_CONVEX_URL"}`,
         `  ${statusIcon(fcStatus)}  Firecrawl            ${fcStatus === "ok" ? "reachable" : fcStatus === "unconfigured" ? "no FIRECRAWL_API_KEY — deep_research will use proxy" : "unreachable"}`,
         `  ${statusIcon(smStatus)}  Supermemory (cloud)  ${localMemCfg ? "not used — local memory active" : smStatus === "ok" ? "reachable" : "unreachable — memory tools may fail"}`,
-        `  ${statusIcon(localSmStatus)}  Supermemory (local)  ${localMemCfg ? (localSmStatus === "ok" ? `reachable at ${localMemCfg.url}` : `configured but unreachable at ${localMemCfg.url}`) : "not configured — run `noelclaw setup`"}`,
+        `  ${statusIcon(localSmStatus)}  Local memory         ${localMemLabel}`,
         ``,
-        `**API Keys configured:**`,
+        `**API Keys configured:** _(none of the LLM keys are required — see below)_`,
         ...Object.entries(envKeys).map(([k, v]) => `  ${v ? "✅" : "⚪"}  ${k}`),
         ``,
-        `**LLM:** ${llmConfigured ? "✅ configured" : "⚠️  no LLM key — set BANKR_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GROK_API_KEY"}`,
+        `**LLM:** ${llmConfigured ? "✅ configured — used for the CLI agent loop and scheduled agents" : "⚪ none set — optional, tools don't need one"}`,
         ...(hints.length ? [``, ...hints] : []),
       ];
 
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
 
-    case "noel_shell_chat": {
+    case "finch_shell_chat": {
       const { message, agent_id } = args as { message: string; agent_id?: string };
       if (!message) return { content: [{ type: "text", text: "Error: message is required" }] };
       try {
@@ -213,7 +225,7 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.NOELCLAW_SESSION_TOKEN ?? process.env.NOELCLAW_API_KEY ?? ""}`,
+            "Authorization": `Bearer ${process.env.FINCH_SESSION_TOKEN ?? process.env.FINCH_API_KEY ?? ""}`,
           },
           body: JSON.stringify({ message, agentId: agent_id ?? "noel-default" }),
           signal: AbortSignal.timeout(60_000),
@@ -222,7 +234,7 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
           return { content: [{ type: "text", text: `Shell chat error: ${res.status} ${res.statusText}` }] };
         }
         const data = await res.json() as { response?: string; actions?: unknown[] };
-        let text = data.response ?? "No response from Noel Shell.";
+        let text = data.response ?? "No response from Finch Terminal.";
         if (data.actions && Array.isArray(data.actions) && data.actions.length > 0) {
           text += "\n\n**Actions taken:**\n" + (data.actions as Array<{ tool?: string; result?: string }>)
             .map(a => `• \`${a.tool ?? "unknown"}\` → ${a.result ?? "done"}`)
