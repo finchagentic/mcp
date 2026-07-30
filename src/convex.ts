@@ -60,8 +60,6 @@ export async function callConvex(path: string, method: string, body?: unknown, t
   if (process.env.OPENAI_API_KEY) headers["X-User-OpenAI-Key"] = process.env.OPENAI_API_KEY;
   if (process.env.GROK_API_KEY) headers["X-User-Grok-Key"] = process.env.GROK_API_KEY;
   if (process.env.BANKR_API_KEY) headers["X-User-Bankr-Key"] = process.env.BANKR_API_KEY;
-  if (process.env.TELEGRAM_BOT_TOKEN) headers["X-User-Telegram-Token"] = process.env.TELEGRAM_BOT_TOKEN;
-  if (process.env.TELEGRAM_CHAT_ID) headers["X-User-Telegram-Chat"] = process.env.TELEGRAM_CHAT_ID;
 
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
@@ -146,12 +144,4 @@ export async function callConvexRaw(path: string, toolName = "unknown", timeoutM
   });
   if (!res.ok) throw new Error(`Finch API error: ${res.status}`);
   return res.text();
-}
-
-export async function notifyTelegram(userId: string, message: string): Promise<{ sent: boolean; reason?: string }> {
-  try {
-    return await callConvex("/user/telegram/notify", "POST", { userId, message }, "set_telegram");
-  } catch (error: any) {
-    return { sent: false, reason: error.message ?? String(error) };
-  }
 }

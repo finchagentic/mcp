@@ -116,7 +116,7 @@ export function buildMonitorList(
 }
 
 export async function handleMonitorTool(name: string, args: unknown): Promise<ToolResult | null> {
-  if (name === "schedule_research" || name === "create_monitor") {
+  if (name === "schedule_research") {
     const parsed = CreateSchema.safeParse(args);
     if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
     const key = getKey();
@@ -210,7 +210,7 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
           key: `monitor-config/${externalId}`,
           agentId: "os",
           tags: ["monitor-config"],
-          commitMsg: "create_monitor config",
+          commitMsg: "schedule_research config",
         }, "vault_save");
       } catch {
         configSaved = false;
@@ -260,7 +260,7 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
         return {
           content: [{
             type: "text",
-            text: `No active monitors.\n\nUse \`create_monitor\` to set up an autonomous agent that runs on a schedule.`,
+            text: `No active monitors.\n\nUse \`schedule_research\` to set up an autonomous agent that runs on a schedule.`,
           }],
           structuredContent: buildMonitorList([]),
         };

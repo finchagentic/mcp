@@ -14,6 +14,7 @@ import { PaymentRequiredError, buildPaymentHeader } from "./convex.js";
 import { listVaultResources, readVaultResource } from "./resources.js";
 import { listPrompts, getPrompt } from "./prompts.js";
 import { filterTools } from "./tool-filter.js";
+import { withAnnotations } from "./annotations.js";
 
 // Read version from package.json so the server announces the same version
 // MCP clients see in the npm tarball. Falls back to "unknown" if the file
@@ -34,12 +35,17 @@ import { FRAMEWORK_TOOLS, handleFrameworkTool } from "./tools/framework.js";
 import { WALLET_TOOLS, handleWalletTool } from "./tools/wallet.js";
 import { VAULT_TOOLS, handleVaultTool } from "./tools/vault.js";
 import { MIROSHARK_TOOLS, handleMirosharkTool } from "./tools/miroshark.js";
-import { HUMANIZER_TOOLS, handleHumanizerTool } from "./tools/humanizer.js";
 import { AGENT_TOOLS, handleAgentTool } from "./tools/agents.js";
 import { SCANNER_TOOLS, handleScannerTool } from "./tools/scanner.js";
 import { CODER_TOOLS, handleCoderTool } from "./tools/coder.js";
+import { EQUITY_TOOLS, handleEquityTool } from "./tools/equity.js";
+import { INSIDER_TOOLS, handleInsiderTool } from "./tools/insider.js";
+import { EVENT_TOOLS, handleEventTool } from "./tools/events.js";
 import { BASE_TOOLS, handleBaseTool } from "./tools/base.js";
 import { BASE_MCP_TOOLS, handleBaseMcpTool } from "./tools/base-mcp.js";
+import { RH_MCP_TOOLS, handleRhMcpTool } from "./tools/rh-mcp.js";
+import { RH_ORDER_TOOLS, handleRhOrderTool } from "./tools/rh-orders.js";
+import { BRIDGE_TOOLS, handleBridgeTool } from "./tools/rh-bridge.js";
 import { MEMORY_TOOLS, handleMemoryTool } from "./tools/memory.js";
 import { OS_TOOLS, handleOsTool } from "./tools/os.js";
 import { RESEARCH_TOOLS, handleResearchTool } from "./tools/research.js";
@@ -55,7 +61,7 @@ import { getTier, PREMIUM_TOOLS, tokenGateError } from "./token-gate.js";
 const PRIVATE_KEY_RESPONSE = {
   content: [{
     type: "text" as const,
-    text: "I don't have access to your private key. Your wallet is secured by Noelclaw's encrypted vault. Only you can manage it at noelclaw.com",
+    text: "I don't have access to your private key. Your wallet is secured by Finch's encrypted vault. Only you can manage it at finchagentic.com",
   }],
 };
 
@@ -70,33 +76,38 @@ function containsSensitiveRequest(args: unknown): boolean {
 }
 
 export const ALL_TOOLS = [
-  ...MARKET_TOOLS,       // 5 - get_market_data, get_token_data, compare_tokens, market_overview, token_history
-  ...INSIGHT_TOOLS,      // 3 - ask_noel, market_thesis, trade_plan
+  ...MARKET_TOOLS,       // 6 - get_market_data, get_token_data, compare_tokens, market_overview, token_history, get_base_token_data
+  ...INSIGHT_TOOLS,      // 3 - ask_finch, market_thesis, trade_plan
   ...DEFI_TOOLS,         // 1 - get_defi_yields (swap/send/portfolio/estimate/analyze moved to base_mcp_* in v3.17.5)
   ...AUTOMATION_TOOLS,   // 6 - create, list, pause, delete, get_runs, run
   // SWARM_TOOLS removed v3.19 - multi-agent research is now built into
   // deep_research (depth=standard|deep). Handler fully removed v3.21.
-  ...FRAMEWORK_TOOLS,    // 3 - list_playbooks, run_playbook, get_noel_ledger
-  ...VAULT_TOOLS,        // 14 - save, read, list, search, history, diff, export, pin, tag, delete, link, related, store_credential, get_credential
+  ...FRAMEWORK_TOOLS,    // 3 - list_playbooks, run_playbook, get_finch_ledger
+  ...VAULT_TOOLS,        // 15 - save, read, list, search, history, diff, export, pin, unpublish, tag, delete, link, related, store_credential, get_credential
   ...WALLET_TOOLS,       // 3 - get_wallet_address, get_wallet_balance, wallet_sign_message
   ...MIROSHARK_TOOLS,    // 3 - simulate, status, stop
-  ...HUMANIZER_TOOLS,    // 2 - humanize_text, write_content (thread+post merged)
   ...AGENT_TOOLS,        // 12 - list_agents, hire_agent, agent_spawn, agent_recall, agent_update, agent_identity, agent_ledger + agent_schedule, agent_unschedule, agent_pause, agent_resume, agent_runs (v3.18 autonomous)
   ...SCANNER_TOOLS,      // 3 - score_token, check_token, scan_market (dips+momentum merged)
-  ...CODER_TOOLS,        // 5 - generate_contract, audit_contract, explain_code, review_code, generate_mcp_skill
-  ...BASE_TOOLS,         // 4 - query_vaults, list_markets, prepare_deposit, chain_stats
+  ...EQUITY_TOOLS,       // 1 - stock_fundamentals (SEC EDGAR XBRL; no key)
+  ...INSIDER_TOOLS,      // 1 - stock_insider (SEC Form 4; separates discretionary from automatic)
+  ...EVENT_TOOLS,        // 1 - stock_events (SEC 8-K item codes decoded)
+  ...CODER_TOOLS,        // 1 - audit_contract (static Solidity scan; the client model does the reasoning)
+  ...BASE_TOOLS,         // 4 - base_mcp_yield_vaults, base_mcp_lending_rates, base_mcp_deposit_guide, base_mcp_network
   ...BASE_MCP_TOOLS,     // 7 - base_mcp_{status,balance,send,swap,estimate,lend,resolve} (analyze removed v3.17.5 - dead backend route)
+  ...RH_MCP_TOOLS,       // 8 - rh_mcp_{status,list_stocks,balance,estimate,swap} + rh_token_resolve, rh_analyze, rh_safety_check (RH Chain 4663 Uni V4: stocks + arbitrary crypto via DexScreener/Blockscout)
+  ...RH_ORDER_TOOLS,     // 5 - rh_dca_create, rh_bracket_create, rh_orders_list, rh_order_cancel, rh_orders_tick (RH automated DCA/TP/SL)
+  ...BRIDGE_TOOLS,       // 1 - rh_stock_bridge (tokenized stock vs real equity)
   ...MEMORY_TOOLS,       // 10 - memory_add, memory_search, memory_context, memory_profile, memory_list, memory_delete, memory_insight, memory_extract, memory_consolidate, memory_publish
-  ...OS_TOOLS,           // 3 - noel_status, noel_diagnostics, noel_shell_chat
+  ...OS_TOOLS,           // 3 - finch_status, finch_diagnostics, finch_shell_chat
   ...RESEARCH_TOOLS,       // 2 - web_scrape, web_search
-  ...DEEP_RESEARCH_TOOLS,    // 1 - deep_research (plan → search → scrape → synthesize → cite)
+  ...DEEP_RESEARCH_TOOLS,    // 1 - deep_research (search → scrape → rank → cited evidence pack; caller synthesises)
   ...RESEARCH_COMPARE_TOOLS, // 1 - research_compare (diff two reports across time)
   ...RESEARCH_CHAIN_TOOLS,   // 1 - research_chain (walk continueFrom evolution timeline)
-  ...MONITOR_TOOLS,        // 4 - schedule_research, create_monitor (alias), list_monitors, cancel_monitor
+  ...MONITOR_TOOLS,        // 3 - schedule_research, list_monitors, cancel_monitor
   ...GITHUB_TOOLS,       // 8 - list_repos, list_prs, get_pr, list_issues, get_issue, get_file, get_commits, search_code
   ...CHRONICLE_TOOLS,    // 4 - chronicle_add, chronicle_list, chronicle_search, chronicle_stats
   ...PACKET_TOOLS,       // 4 - packet_create, packet_run, packet_list, packet_share
-  // total: 108 (v3.32.0: +execute_swap in noelShell; v3.31.0: +get_wallet_balance, +wallet_sign_message, +chronicle_search, +chronicle_stats, +noel_diagnostics; v3.30.0: +noel_shell_chat)
+  // total: 120 (refactor: −6 tools whose work the client model already does; v3.41.0: rh_mcp_balance now lists ALL held tokens via Blockscout (was blind to non-catalog crypto); v3.40.0: RH RPC relay fallback via Convex — works on networks that block robinhood.com; v3.39.1: fix — sell approval target now follows the route (Permit2 for V4, SwapRouter02 for V2/V3); v3.39.0: +Uniswap V2 routing — full V2/V3/V4 best-fill router; v3.38.0: Uniswap V3 routing + launchpad detection folded into rh_safety_check; v3.37.1: RH audit fixes — preview read-only, tx-hash extract, pending nonce, atomic store, crash isolation; v3.37.0: +rh_safety_check; v3.36.0: +RH DCA/TP/SL)
 ];
 
 // Build O(1) dispatch map at startup - avoids sequential chained awaits per call
@@ -110,12 +121,17 @@ export const HANDLER_MAP = new Map<string, Handler>([
   ...WALLET_TOOLS.map(t      => [t.name, handleWalletTool]      as [string, Handler]),
   ...INSIGHT_TOOLS.map(t     => [t.name, handleInsightTool]     as [string, Handler]),
   ...MIROSHARK_TOOLS.map(t   => [t.name, handleMirosharkTool]   as [string, Handler]),
-  ...HUMANIZER_TOOLS.map(t   => [t.name, handleHumanizerTool]   as [string, Handler]),
   ...AGENT_TOOLS.map(t       => [t.name, handleAgentTool]       as [string, Handler]),
   ...SCANNER_TOOLS.map(t     => [t.name, handleScannerTool]     as [string, Handler]),
   ...CODER_TOOLS.map(t       => [t.name, handleCoderTool]       as [string, Handler]),
+  ...EQUITY_TOOLS.map(t      => [t.name, handleEquityTool]      as [string, Handler]),
+  ...INSIDER_TOOLS.map(t     => [t.name, handleInsiderTool]     as [string, Handler]),
+  ...EVENT_TOOLS.map(t       => [t.name, handleEventTool]       as [string, Handler]),
   ...BASE_TOOLS.map(t        => [t.name, handleBaseTool]        as [string, Handler]),
   ...BASE_MCP_TOOLS.map(t    => [t.name, handleBaseMcpTool]    as [string, Handler]),
+  ...RH_MCP_TOOLS.map(t      => [t.name, handleRhMcpTool]       as [string, Handler]),
+  ...RH_ORDER_TOOLS.map(t    => [t.name, handleRhOrderTool]     as [string, Handler]),
+  ...BRIDGE_TOOLS.map(t      => [t.name, handleBridgeTool]      as [string, Handler]),
   ...MEMORY_TOOLS.map(t      => [t.name, handleMemoryTool]      as [string, Handler]),
   ...OS_TOOLS.map(t          => [t.name, handleOsTool]           as [string, Handler]),
   ...RESEARCH_TOOLS.map(t      => [t.name, handleResearchTool]   as [string, Handler]),
@@ -128,17 +144,43 @@ export const HANDLER_MAP = new Map<string, Handler>([
   ...PACKET_TOOLS.map(t      => [t.name, (n: string, a: unknown) => handlePacket(n, a as Record<string, unknown>)] as [string, Handler]),
 ]);
 
+// `instructions` is returned in the initialize result - it tells the client
+// (and, through it, the model) what this server is and how to reach for it.
+// Kept short: clients surface it as system context, so it pays a token cost on
+// every session.
+const SERVER_INSTRUCTIONS = [
+  "Finch is the runtime layer for agentic AI: persistent memory, autonomous",
+  "agents, a versioned vault, scheduled workflows, live market data, deep",
+  "research, DeFi on Base (base_mcp_*), and Robinhood Chain trading (rh_*).",
+  "",
+  "Tool annotations are set: read-only tools are safe to run without asking;",
+  "tools with destructiveHint (deletes, cancels, memory_publish, and anything",
+  "that moves funds - base_mcp_swap/send/lend, rh_mcp_swap, rh_dca_create,",
+  "rh_bracket_create, run_playbook/automation, packet_run) should be confirmed",
+  "with the user before running.",
+  "",
+  "Vault entries are also exposed as resources (finch://vault/<key>); prefer",
+  "reading those over a vault_read tool call when you only need the content.",
+  "This server never has access to private keys or seed phrases - the wallet is",
+  "custodial and secured server-side.",
+].join("\n");
+
 export const server = new Server(
-  { name: "noelclaw", version: PKG_VERSION },
-  { capabilities: { tools: {}, resources: {}, prompts: {} } }
+  { name: "finch", version: PKG_VERSION },
+  {
+    capabilities: { tools: {}, resources: {}, prompts: {} },
+    instructions: SERVER_INSTRUCTIONS,
+  }
 );
 
-// Tool listing respects NOELCLAW_TOOLS for users who want a smaller surface.
+// Tool listing respects FINCH_TOOLS for users who want a smaller surface.
+// withAnnotations attaches MCP behavioural hints (readOnly/destructive/etc) so
+// clients can auto-run reads and prompt before destructive/fund-moving calls.
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: filterTools(ALL_TOOLS),
+  tools: withAnnotations(filterTools(ALL_TOOLS)),
 }));
 
-// MCP Resources - vault entries surface as `noelclaw://vault/<key>`.
+// MCP Resources - vault entries surface as `finch://vault/<key>`.
 // Clients can pull them via the standard resource flow instead of a Tool
 // call, saving per-call schema cost. Listing is best-effort: it never
 // throws to avoid breaking the initial handshake on transient backend
@@ -227,11 +269,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           "**To pay:**",
           `1. Send ${d.amount} USDC to \`${d.address}\` on Base mainnet`,
           `2. Copy the transaction hash`,
-          `3. Set env var: \`NOELCLAW_PAYMENT_HEADER=${buildPaymentHeader("<txHash>", d.requestId)}\``,
+          `3. Set env var: \`FINCH_PAYMENT_HEADER=${buildPaymentHeader("<txHash>", d.requestId)}\``,
           `   (replace \`<txHash>\` with the actual transaction hash)`,
           `4. Retry the tool call`, ``,
           "**Or bypass with a session token:**",
-          "Set `NOELCLAW_SESSION_TOKEN` with your Noelclaw session token from noelclaw.com",
+          "Set `FINCH_SESSION_TOKEN` with your Finch session token from finchagentic.com",
         ] : []),
       ];
       return { content: [{ type: "text", text: lines.join("\n") }], isError: true };

@@ -2,12 +2,12 @@ import { getOrCreateWallet, BASE_RPC } from "./wallet.js";
 import { getSavedToken } from "./config.js";
 import type { ToolResult } from "./types.js";
 
-const NOELCLAW_TOKEN = "0x4B524015D54a27d4472F5c59c570730D69499Ba3";
+const FINCH_TOKEN_CA = "0x4B524015D54a27d4472F5c59c570730D69499Ba3";
 const BALANCE_SELECTOR = "0x70a08231"; // balanceOf(address)
 const CACHE_TTL = 5 * 60 * 1000;      // 5 min - avoid per-call RPC
 
-// 1 NOELCLAW (18 decimals). Override via NOELCLAW_MIN_BALANCE env var.
-const MIN_BALANCE = BigInt(process.env.NOELCLAW_MIN_BALANCE ?? "1000000000000000000");
+// 1 FINCH (18 decimals). Override via FINCH_MIN_BALANCE env var.
+const MIN_BALANCE = BigInt(process.env.FINCH_MIN_BALANCE ?? "1000000000000000000");
 
 export type Tier = "holder" | "basic";
 
@@ -20,7 +20,7 @@ async function erc20BalanceOf(address: string): Promise<bigint> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       jsonrpc: "2.0", id: 1, method: "eth_call",
-      params: [{ to: NOELCLAW_TOKEN, data: BALANCE_SELECTOR + padded }, "latest"],
+      params: [{ to: FINCH_TOKEN_CA, data: BALANCE_SELECTOR + padded }, "latest"],
     }),
     signal: AbortSignal.timeout(8000),
   });
@@ -30,7 +30,7 @@ async function erc20BalanceOf(address: string): Promise<bigint> {
 
 // Session token or API key → always holder (authenticated user)
 function hasAuthBypass(): boolean {
-  return !!(getSavedToken() || process.env.NOELCLAW_API_KEY);
+  return !!(getSavedToken() || process.env.FINCH_API_KEY);
 }
 
 export async function getTier(): Promise<Tier> {
@@ -49,7 +49,7 @@ export async function getTier(): Promise<Tier> {
   }
 }
 
-// Tools that require NOELCLAW token to unlock
+// Tools that require FINCH token to unlock
 export const PREMIUM_TOOLS = new Set<string>([
   // Simulation
   "miroshark_simulate", "miroshark_status", "miroshark_stop",
@@ -60,7 +60,7 @@ export const PREMIUM_TOOLS = new Set<string>([
   // Automations
   "create_automation", "run_automation", "pause_automation", "delete_automation", "get_automation_runs",
   // Autonomous monitors
-  "schedule_research", "create_monitor",
+  "schedule_research",
   // Persistent agents
   "hire_agent", "agent_spawn", "agent_recall", "agent_update",
 ]);
@@ -72,19 +72,19 @@ export function tokenGateError(toolName: string): ToolResult {
       text: [
         "🔒 **Premium Tool**",
         "",
-        `\`${toolName}\` requires a Noelclaw account or NOELCLAW token.`,
+        `\`${toolName}\` requires a Finch account or FINCH token.`,
         "",
         "**Option 1 - Sign in (easiest):**",
-        "1. Go to noelclaw.com and sign in",
+        "1. Go to finchagentic.com and sign in",
         "2. Copy your session token from Settings",
-        "3. Add to your MCP config: `NOELCLAW_SESSION_TOKEN=noel_...`",
+        "3. Add to your MCP config: `FINCH_SESSION_TOKEN=…`",
         "",
-        "**Option 2 - Hold NOELCLAW token on Base:**",
-        "1. Get NOELCLAW  -  CA: `0x4B524015D54a27d4472F5c59c570730D69499Ba3`",
-        "2. Hold at least 1 NOELCLAW in your local wallet",
+        "**Option 2 - Hold FINCH token on Base:**",
+        "1. Get FINCH  -  CA: `0x4B524015D54a27d4472F5c59c570730D69499Ba3`",
+        "2. Hold at least 1 FINCH in your local wallet",
         "3. Access unlocks automatically",
         "",
-        "Run `noel_status` to check your current tier.",
+        "Run `finch_status` to check your current tier.",
       ].join("\n"),
     }],
     isError: true,

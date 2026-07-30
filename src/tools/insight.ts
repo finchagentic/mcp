@@ -534,7 +534,7 @@ export async function handleInsightTool(name: string, args: unknown): Promise<To
     // thesis is model work — and the caller is a model that can also weigh the
     // user's stated context. Hand over grounded data plus the structure.
     const suggest = process.env.TRIGGER_SECRET_KEY
-      ? `\n\n---\n💡 Use \`create_monitor\` for scheduled briefings on ${token.toUpperCase()}.`
+      ? `\n\n---\n💡 Use \`schedule_research\` for scheduled briefings on ${token.toUpperCase()}.`
       : "";
 
     return {
@@ -638,7 +638,7 @@ export async function handleInsightTool(name: string, args: unknown): Promise<To
       : [`**Max position (${riskTolerance}):** ${band.label} — pass \`portfolioSize\` for USD figures.`];
 
     const suggest = process.env.TRIGGER_SECRET_KEY
-      ? `\n\n---\n💡 Use \`create_monitor\` for scheduled briefings on ${token.toUpperCase()}.`
+      ? `\n\n---\n💡 Use \`schedule_research\` for scheduled briefings on ${token.toUpperCase()}.`
       : "";
 
     return {
