@@ -153,6 +153,17 @@ function posNum(v: unknown): number {
   return isFinite(n) ? n : NaN;
 }
 
+// Same bound quoteRh() enforces in rh-mcp.ts (matching defi.ts's Base-swap
+// bound of .positive().max(50)) - reject an out-of-range slippagePct at order
+// creation time rather than letting it silently reach an unattended
+// rh_orders_tick execution weeks later.
+function badSlippagePct(v: unknown): string | null {
+  if (v == null) return null;
+  const n = posNum(v);
+  if (!(n > 0) || n > 50) return `slippagePct must be greater than 0 and at most 50 (got ${v})`;
+  return null;
+}
+
 function fmtUsd(n: number | null | undefined): string {
   if (n == null || !isFinite(n)) return "?";
   if (n >= 1) return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -285,6 +296,8 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
       if (!(amountEth > 0)) return textResult("amountEthPerBuy must be > 0", true);
       if (!(intervalHours > 0)) return textResult("intervalHours must be > 0", true);
       if (!(totalBuys > 0)) return textResult("totalBuys must be ≥ 1", true);
+      const slippageErr = badSlippagePct(a.slippagePct);
+      if (slippageErr) return textResult(slippageErr, true);
       let resolved;
       try {
         resolved = await resolveTokenSmart(String(a.token));
@@ -349,6 +362,8 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
       if (hasTp && hasSl && sl! >= tp!) return textResult("slPriceUsd must be below tpPriceUsd", true);
       const sellPct = a.sellPct != null ? posNum(a.sellPct) : 100;
       if (!(sellPct > 0 && sellPct <= 100)) return textResult("sellPct must be 1..100", true);
+      const bracketSlippageErr = badSlippagePct(a.slippagePct);
+      if (bracketSlippageErr) return textResult(bracketSlippageErr, true);
 
       let resolved;
       try {

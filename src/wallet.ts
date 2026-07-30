@@ -86,7 +86,26 @@ export function warnIfNoPassphrase(): void {
   );
 }
 
+let _walletCreationPromise: Promise<ethers.Wallet | ethers.HDNodeWallet> | null = null;
+
 export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet> {
+  if (_cachedWallet) return _cachedWallet;
+  // In-process mutex: two concurrent first-run callers (before _cachedWallet
+  // is set) must not each independently generate + write their own random
+  // wallet - only one write can ever survive on disk, and the loser would go
+  // on signing in-memory with a keypair that no longer matches what's
+  // persisted, silently switching the user's wallet identity mid-session.
+  // Chain all concurrent first-run callers through one shared promise.
+  if (_walletCreationPromise) return _walletCreationPromise;
+  _walletCreationPromise = loadOrCreateWallet();
+  try {
+    return await _walletCreationPromise;
+  } finally {
+    _walletCreationPromise = null;
+  }
+}
+
+async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet> {
   if (_cachedWallet) return _cachedWallet;
   warnIfNoPassphrase();
   if (fs.existsSync(WALLET_FILE)) {
@@ -150,9 +169,23 @@ export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNode
   const wallet = ethers.Wallet.createRandom();
   if (!fs.existsSync(WALLET_DIR)) fs.mkdirSync(WALLET_DIR, { recursive: true });
   const encrypted = await wallet.encrypt(getMachineKey());
-  fs.writeFileSync(WALLET_FILE, encrypted, { mode: 0o600 });
-  _cachedWallet = wallet;
-  return wallet;
+  try {
+    // Exclusive create ("wx") - guards the cross-process version of the race
+    // the in-process mutex above already closes: two separate `finch`
+    // invocations racing on the very first run, before this file exists.
+    fs.writeFileSync(WALLET_FILE, encrypted, { mode: 0o600, flag: "wx" });
+    _cachedWallet = wallet;
+    return wallet;
+  } catch (writeErr: any) {
+    if (writeErr?.code !== "EEXIST") throw writeErr;
+    // Another process won the race and created the file first. Use theirs -
+    // never sign with the wallet we generated in memory once it's clear it
+    // isn't the one actually persisted to disk.
+    const encryptedExisting = fs.readFileSync(WALLET_FILE, "utf8");
+    const existingWallet = await ethers.Wallet.fromEncryptedJson(encryptedExisting, getMachineKey());
+    _cachedWallet = existingWallet;
+    return existingWallet;
+  }
 }
 
 export async function signRequest(toolName: string): Promise<{ address: string; signature: string; timestamp: string }> {

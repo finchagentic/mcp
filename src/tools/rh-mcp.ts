@@ -1063,7 +1063,16 @@ async function quoteRh(args: {
     throw new Error("RH swaps route ETH ↔ token. Buy a token with ETH, or sell a token for ETH.");
   }
   const sellAmount = parseHumanToWei(args.amount, from.decimals);
-  const slippageBps = Math.round((args.maxSlippagePct ?? 2.0) * 100);
+  const slippagePct = args.maxSlippagePct ?? 2.0;
+  // Same bound defi.ts's SwapSchema already enforces for Base swaps
+  // (.positive().max(50)) - this file had no equivalent check anywhere, so a
+  // negative or absurd value flowed straight through to the backend as
+  // slippageBps, both for direct rh_mcp_swap calls and for every unattended
+  // rh_orders_tick execution of a DCA/bracket order created with a bad value.
+  if (!(slippagePct > 0) || slippagePct > 50) {
+    throw new Error(`maxSlippagePct must be greater than 0 and at most 50 (got ${args.maxSlippagePct}).`);
+  }
+  const slippageBps = Math.round(slippagePct * 100);
   const result = await callConvex(
     "/mcp/rh/quote",
     "POST",
