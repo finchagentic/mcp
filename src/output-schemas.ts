@@ -536,14 +536,6 @@ export const OUTPUT_SCHEMAS: Record<string, JSONSchema> = {
   },
 
   // ── agents ──────────────────────────────────────────────────────────────────
-  list_agents: {
-    type: "object",
-    properties: {
-      count: { type: "number" },
-      agents: { type: "array", items: { type: "object", additionalProperties: true } },
-    },
-    required: ["count", "agents"],
-  },
   agent_ledger: {
     type: "object",
     properties: {

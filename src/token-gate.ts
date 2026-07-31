@@ -62,7 +62,7 @@ export const PREMIUM_TOOLS = new Set<string>([
   // Autonomous monitors
   "schedule_research",
   // Persistent agents
-  "hire_agent", "agent_spawn", "agent_recall", "agent_update",
+  "agent_spawn", "agent_recall", "agent_update",
 ]);
 
 export function tokenGateError(toolName: string): ToolResult {

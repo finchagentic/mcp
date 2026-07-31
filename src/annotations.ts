@@ -52,9 +52,6 @@ const WRITE_IDEMPOTENT = new Set<string>([
 
 // readOnly=false, destructive=false.
 // Additive writes / new resources: they create or append, they don't destroy.
-// (hire_agent is deliberately NOT here: it only returns a specialist persona
-// scoped to the caller's task - it reads, it does not write - so it stays in
-// the read-only default.)
 const WRITE = new Set<string>([
   "agent_spawn",
   "chronicle_add",

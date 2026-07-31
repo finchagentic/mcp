@@ -85,12 +85,10 @@ describe("tool annotations", () => {
   it("keeps pure reads read-only (so clients can auto-run them)", () => {
     const mustBeReadOnly = [
       "get_market_data",
-      "list_agents",
       "memory_search",
       "vault_read",
       "web_search",
       "audit_contract",
-      "hire_agent", // returns a persona, does not write
       "rh_safety_check",
       "base_mcp_estimate",
       // Returns deposit INSTRUCTIONS only (protocol/vault/APY) - never

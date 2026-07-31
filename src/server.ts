@@ -86,7 +86,7 @@ export const ALL_TOOLS = [
   ...VAULT_TOOLS,        // 15 - save, read, list, search, history, diff, export, pin, unpublish, tag, delete, link, related, store_credential, get_credential
   ...WALLET_TOOLS,       // 3 - get_wallet_address, get_wallet_balance, wallet_sign_message
   ...MIROSHARK_TOOLS,    // 3 - simulate, status, stop
-  ...AGENT_TOOLS,        // 12 - list_agents, hire_agent, agent_spawn, agent_recall, agent_update, agent_identity, agent_ledger + agent_schedule, agent_unschedule, agent_pause, agent_resume, agent_runs (v3.18 autonomous)
+  ...AGENT_TOOLS,        // 10 - agent_spawn, agent_recall, agent_update, agent_identity, agent_ledger + agent_schedule, agent_unschedule, agent_pause, agent_resume, agent_runs (v3.18 autonomous). list_agents/hire_agent removed - their backend routes were never implemented, see tools/agents.ts
   ...SCANNER_TOOLS,      // 3 - score_token, check_token, scan_market (dips+momentum merged)
   ...EQUITY_TOOLS,       // 1 - stock_fundamentals (SEC EDGAR XBRL; no key)
   ...INSIDER_TOOLS,      // 1 - stock_insider (SEC Form 4; separates discretionary from automatic)

@@ -10,7 +10,11 @@ export const DEFI_TOOLS: Tool[] = [
     name: "get_defi_yields",
     description:
       "Fetch top DeFi yield opportunities on Base - Morpho, Moonwell, Aerodrome, Uniswap, and more. " +
-      "Returns live APY, TVL, and pool info from DeFiLlama (no API key required). " +
+      "Returns APY, TVL, and pool info aggregated from DeFiLlama (no API key required) - broadest " +
+      "protocol coverage, but DeFiLlama's numbers can lag the protocol's own API by hours. Good first " +
+      "stop for comparing across protocols. For the freshest Morpho-vault-specific numbers use " +
+      "base_mcp_yield_vaults instead; for the freshest Moonwell supply/borrow rates use " +
+      "base_mcp_lending_rates instead - both query the protocol directly. " +
       "Filter by token or minimum APY. Use before depositing to find the best rates.",
     inputSchema: {
       type: "object",

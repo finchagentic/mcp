@@ -96,7 +96,7 @@ async function main() {
     { label: "Wallet",     match: n => /^(get_wallet_address|get_wallet_balance|wallet_sign_message)$/.test(n) },
     { label: "MiroShark",  match: n => n.startsWith("miroshark_") },
     { label: "Scanner",    match: n => /^(scan_market|score_token|check_token)$/.test(n) },
-    { label: "Agents",     match: n => n.startsWith("agent_") || n === "list_agents" || n === "hire_agent" },
+    { label: "Agents",     match: n => n.startsWith("agent_") },
     { label: "Coder",      match: n => n === "audit_contract" },
     { label: "Memory",     match: n => n.startsWith("memory_") },
     { label: "OS",         match: n => /^(finch_status|finch_diagnostics|finch_shell_chat)$/.test(n) },

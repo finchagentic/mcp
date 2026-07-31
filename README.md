@@ -79,7 +79,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.1.0 finch-mcp
 
 </details>
 
-No LLM API key is required to start — 116 of 121 tools are plain reads/writes/on-chain calls that your MCP client's own model already drives; only 5 (`ask_finch`, `deep_research`, and scheduled agent learning) do their own multi-step reasoning server-side and need a key (see [Configuration](#configuration)). Tools load on first use.
+No LLM API key is required to start — 114 of 119 tools are plain reads/writes/on-chain calls that your MCP client's own model already drives; only 5 (`ask_finch`, `deep_research`, and scheduled agent learning) do their own multi-step reasoning server-side and need a key (see [Configuration](#configuration)). Tools load on first use.
 
 ## Quick start
 
@@ -99,7 +99,7 @@ save this thesis to vault
 
 ## What you get
 
-**121 tools** across four pillars:
+**119 tools** across four pillars:
 
 | Pillar | What it does |
 |--------|----------------|

@@ -110,43 +110,13 @@ function withAgentLock<T>(agentName: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+// list_agents/hire_agent were removed (not disabled - deleted) because their
+// backend routes, /agents/list and /agents/hire, were never actually
+// registered in app/convex/http.ts - only dangling section-header comments
+// exist there, no matching http.route(...) call. Every call to either tool
+// always 404'd. Re-add them (and the matching handler blocks below) only
+// alongside building those two routes for real.
 export const AGENT_TOOLS: Tool[] = [
-  {
-    name: "list_agents",
-    description: "List all available specialist agents you can hire - built-in experts (analyst, risk-manager, researcher, executor, scout) plus any community-published agents.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "hire_agent",
-    description:
-      "Load a specialist agent's expertise and apply it to a task YOURSELF — the tool returns the agent's " +
-      "full persona (its framework, thresholds and house rules) scoped to your task, and you answer in that " +
-      "voice. Built-in: analyst, risk-manager, researcher, executor, scout; use list_agents for the rest. " +
-      "No API key needed. Pass `execute: true` only when you need the agent's own model to answer instead " +
-      "(costs a server-side LLM call and you cannot steer the reasoning).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        agentId: {
-          type: "string",
-          description: "Agent ID from list_agents. Built-in: analyst, risk-manager, researcher, executor, scout. Or a custom agent ID.",
-        },
-        task: {
-          type: "string",
-          description: "The task or question for the agent. Be specific - better input = better output.",
-        },
-        execute: {
-          type: "boolean",
-          description: "Run the agent server-side instead of returning its persona for you to apply. Default false. Requires a server LLM key.",
-        },
-        maxTokens: {
-          type: "number",
-          description: "execute:true only. Max response tokens (default 800, max 1200).",
-        },
-      },
-      required: ["agentId", "task"],
-    },
-  },
   {
     name: "agent_spawn",
     description:
@@ -310,12 +280,6 @@ export const AGENT_TOOLS: Tool[] = [
   },
 ];
 
-const HireAgentSchema = z.object({
-  agentId:   z.string().min(1),
-  task:      z.string().min(1),
-  execute:   z.boolean().optional(),
-  maxTokens: z.number().int().min(100).max(1200).optional(),
-});
 const SpawnAgentSchema = z.object({
   name:    z.string().min(1).max(60).regex(/^[a-z0-9-]+$/, "name must be lowercase alphanumeric with hyphens"),
   goal:    z.string().min(1),
@@ -331,20 +295,6 @@ const UpdateAgentSchema = z.object({
 });
 
 // ── Structured output builders (schemas in output-schemas.ts) ───────────────
-export function buildAgentList(agents: any[]): Record<string, unknown> {
-  return {
-    count: agents.length,
-    agents: agents.map((a) => ({
-      id: a.id,
-      name: a.name,
-      description: a.description ?? null,
-      category: a.category ?? null,
-      pricingType: a.pricingType ?? null,
-      runs: a.runs ?? null,
-    })),
-  };
-}
-
 export function buildAgentLedger(name: string, versions: any[]): Record<string, unknown> {
   return {
     name,
@@ -375,98 +325,6 @@ export function buildAgentRuns(name: string, runs: any[]): Record<string, unknow
 }
 
 export async function handleAgentTool(name: string, args: unknown): Promise<ToolResult | null> {
-  if (name === "list_agents") {
-    const data = await callConvex("/agents/list", "GET", undefined, "list_agents") as { agents?: Array<{
-      id: string; name: string; description: string; category: string; pricingType: string; runs: number | null;
-    }> };
-    const agents = data.agents ?? [];
-
-    const lines = agents.map((a) => {
-      const badge = a.pricingType === "free" ? "free" : "token-based";
-      const runs = a.runs != null ? ` · ${a.runs} runs` : "";
-      return `**${a.name}** (\`${a.id}\`) [${badge}${runs}]\n  ${a.description}`;
-    });
-
-    return {
-      content: [{
-        type: "text",
-        text: `## Available Agents (${agents.length})\n\n${lines.join("\n\n")}`,
-      }],
-      structuredContent: buildAgentList(agents),
-    };
-  }
-
-  if (name === "hire_agent") {
-    const parsed = HireAgentSchema.safeParse(args);
-    if (!parsed.success) {
-      return {
-        content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }],
-        isError: true,
-      };
-    }
-
-    const { agentId, task, maxTokens, execute = false } = parsed.data;
-    const data = await callConvex(
-      "/agents/hire",
-      "POST",
-      { agentId, task, maxTokens, mode: execute ? "run" : "brief" },
-      "hire_agent",
-    ) as {
-      agent?: string; task?: string; result?: string; systemPrompt?: string; tokensUsed?: number; error?: string;
-    };
-
-    if (data.error) {
-      return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
-    }
-
-    if (execute) {
-      const footer = data.tokensUsed ? `\n\n*Tokens used: ${data.tokensUsed}*` : "";
-      return {
-        content: [{
-          type: "text",
-          text: `## ${data.agent ?? agentId} - Response\n\n${data.result}${footer}`,
-        }],
-      };
-    }
-
-    // The registry lookup is the tool's real work - it holds each agent's
-    // persona, thresholds and hard rules. Applying them is model work, and the
-    // caller's model is the better one *and* the one the user can redirect.
-    if (!data.systemPrompt) {
-      return {
-        content: [{
-          type: "text",
-          text: `Agent \`${agentId}\` returned no persona. The backend may predate brief mode — retry with \`execute: true\`.`,
-        }],
-        isError: true,
-      };
-    }
-
-    return {
-      content: [{
-        type: "text",
-        text: [
-          `## Adopt: ${data.agent ?? agentId}`,
-          ``,
-          `You are now this specialist. Answer the task below **in this persona**, applying its framework, ` +
-            `thresholds and hard rules exactly as written — including the ones that tell you to refuse, ` +
-            `skip or downgrade a setup. Those gates are the reason the persona exists; do not soften them ` +
-            `to give a more agreeable answer.`,
-          ``,
-          `---`,
-          ``,
-          data.systemPrompt,
-          ``,
-          `---`,
-          ``,
-          `### Task`,
-          ``,
-          task,
-        ].join("\n"),
-      }],
-    };
-  }
-
   if (name === "agent_spawn") {
     const parsed = SpawnAgentSchema.safeParse(args);
     if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };

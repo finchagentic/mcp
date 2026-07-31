@@ -26,7 +26,12 @@ export const BASE_TOOLS: Tool[] = [
   {
     name: "base_mcp_yield_vaults",
     description:
-      "Find the best yield/earning opportunities on Base chain using Morpho vaults. Returns all vaults ranked by APY — use this when the user asks about yield farming, APY, best rates to earn, where to put USDC, or passive income on Base. For yield on a specific token, also see base_mcp_lend.",
+      "Find the best yield/earning opportunities on Base chain using Morpho vaults - queries Morpho's own " +
+      "API directly, so numbers are fresher than get_defi_yields' DeFiLlama-aggregated Morpho figures, " +
+      "but this tool only covers Morpho (not Aerodrome/Uniswap/other protocols - use get_defi_yields for " +
+      "cross-protocol comparison). Returns all vaults ranked by APY — use this when the user asks about " +
+      "yield farming, APY, best rates to earn, where to put USDC, or passive income on Base. For yield on " +
+      "a specific token, also see base_mcp_lend.",
     inputSchema: {
       type: "object",
       properties: {
@@ -45,7 +50,12 @@ export const BASE_TOOLS: Tool[] = [
   {
     name: "base_mcp_lending_rates",
     description:
-      "Get lending and borrowing rates across all Moonwell markets on Base. Returns supply APY, borrow APY, liquidity, and utilization per asset. Use when the user asks about borrow rates, lending rates, interest rates, or supply APY on Base.",
+      "Get lending and borrowing rates across all Moonwell markets on Base - queries Moonwell's own API " +
+      "directly, so numbers are fresher than get_defi_yields' DeFiLlama-aggregated Moonwell figures, but " +
+      "this tool only covers Moonwell (use get_defi_yields for cross-protocol comparison, or " +
+      "base_mcp_yield_vaults for Morpho specifically). Returns supply APY, borrow APY, liquidity, and " +
+      "utilization per asset. Use when the user asks about borrow rates, lending rates, interest rates, " +
+      "or supply APY on Base.",
     inputSchema: {
       type: "object",
       properties: {
