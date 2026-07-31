@@ -305,6 +305,40 @@ function formatDate(ts: number): string {
   return new Date(ts).toUTCString();
 }
 
+// ── Structured output builders (schemas in output-schemas.ts) ───────────────
+export function buildVaultList(entries: any[], type?: string): Record<string, unknown> {
+  return {
+    type: type ?? null,
+    count: entries.length,
+    entries: entries.map((e) => ({
+      key: e.key,
+      title: e.title ?? null,
+      type: e.type ?? null,
+      version: e.version ?? null,
+      size: e.size ?? null,
+      updatedAt: e.updatedAt ?? null,
+      isPinned: !!e.isPinned,
+    })),
+  };
+}
+
+export function buildVaultSearch(
+  query: string,
+  results: Array<{ key: string; title?: string; type?: string; score?: number; preview?: string }>,
+): Record<string, unknown> {
+  return {
+    query,
+    count: results.length,
+    results: results.map((r) => ({
+      key: r.key,
+      title: r.title ?? null,
+      type: r.type ?? null,
+      score: r.score ?? null,
+      preview: r.preview ?? null,
+    })),
+  };
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 export async function handleVaultTool(name: string, args: unknown): Promise<ToolResult | null> {
@@ -473,13 +507,21 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
       if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
 
       const entries: any[] = data.entries ?? [];
-      if (!entries.length) return { content: [{ type: "text", text: `No vault entries found${parsed.data.type ? ` of type '${parsed.data.type}'` : ""}.` }] };
+      if (!entries.length) {
+        return {
+          content: [{ type: "text", text: `No vault entries found${parsed.data.type ? ` of type '${parsed.data.type}'` : ""}.` }],
+          structuredContent: buildVaultList([], parsed.data.type),
+        };
+      }
 
       const header = `📚 **Finch Vault** (${entries.length} entries)`;
       const rows = entries.map((e) =>
         `${e.isPinned ? "📌 " : ""}[\`${e.key}\`] ${e.title} - v${e.version} · ${e.type} · ${formatBytes(e.size)} · ${formatDate(e.updatedAt)}`
       );
-      return { content: [{ type: "text", text: [header, "", ...rows].join("\n") }] };
+      return {
+        content: [{ type: "text", text: [header, "", ...rows].join("\n") }],
+        structuredContent: buildVaultList(entries, parsed.data.type),
+      };
     }
 
     case "vault_search": {
@@ -561,7 +603,13 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
                 `   ${g.bestPreview}${g.bestPreview.length >= 200 ? "…" : ""}`,
               ].join("\n");
             });
-            return { content: [{ type: "text", text: [header, "", ...rows].join("\n") }] };
+            return {
+              content: [{ type: "text", text: [header, "", ...rows].join("\n") }],
+              structuredContent: buildVaultSearch(
+                parsed.data.query,
+                grouped.map((g) => ({ key: g.key, title: g.title, type: g.type, score: g.bestScore, preview: g.bestPreview })),
+              ),
+            };
           }
         }
       }
@@ -576,14 +624,22 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
       if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
 
       const results: any[] = data.results ?? [];
-      if (!results.length) return { content: [{ type: "text", text: `No vault entries found for: "${parsed.data.query}"` }] };
+      if (!results.length) {
+        return {
+          content: [{ type: "text", text: `No vault entries found for: "${parsed.data.query}"` }],
+          structuredContent: buildVaultSearch(parsed.data.query, []),
+        };
+      }
 
       const header = `🔍 **Vault Search**: "${parsed.data.query}" - ${results.length} result(s)`;
       const rows = results.map((r, i) => [
         `${i + 1}. [\`${r.key}\`] **${r.title}**  (${r.type} · v${r.version})`,
         `   ${r.preview}`,
       ].join("\n"));
-      return { content: [{ type: "text", text: [header, "", ...rows].join("\n") }] };
+      return {
+        content: [{ type: "text", text: [header, "", ...rows].join("\n") }],
+        structuredContent: buildVaultSearch(parsed.data.query, results),
+      };
     }
 
     case "vault_history": {
