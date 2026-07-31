@@ -695,7 +695,7 @@ function rhRelayHeaders(): Record<string, string> {
 }
 
 /** Provider that works on both paths — relays via Convex when RPC is blocked. */
-async function rhProviderAsync(): Promise<ethers.JsonRpcProvider> {
+export async function rhProviderAsync(): Promise<ethers.JsonRpcProvider> {
   if ((await rhRpcMode()) === "direct") {
     return new ethers.JsonRpcProvider(RH_RPC, RH_CHAIN_ID);
   }

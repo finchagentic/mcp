@@ -94,6 +94,7 @@ async function main() {
     { label: "Framework",  match: n => /^(list_playbooks|run_playbook|get_finch_ledger)$/.test(n) },
     { label: "Vault",      match: n => n.startsWith("vault_") },
     { label: "Wallet",     match: n => /^(get_wallet_address|get_wallet_balance|wallet_sign_message)$/.test(n) },
+    { label: "Staking",    match: n => /^(stake_finch|unstake_finch|stake_finch_status)$/.test(n) },
     { label: "MiroShark",  match: n => n.startsWith("miroshark_") },
     { label: "Scanner",    match: n => /^(scan_market|score_token|check_token)$/.test(n) },
     { label: "Agents",     match: n => n.startsWith("agent_") },

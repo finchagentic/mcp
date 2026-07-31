@@ -56,6 +56,7 @@ import { MONITOR_TOOLS, handleMonitorTool } from "./tools/monitor.js";
 import { GITHUB_TOOLS, handleGithubTool } from "./tools/github.js";
 import { CHRONICLE_TOOLS, handleChronicle } from "./tools/chronicle.js";
 import { PACKET_TOOLS, handlePacket } from "./tools/packets.js";
+import { STAKE_TOOLS, handleStakeTool } from "./tools/stake.js";
 import { getTier, PREMIUM_TOOLS, tokenGateError } from "./token-gate.js";
 
 const PRIVATE_KEY_RESPONSE = {
@@ -107,7 +108,12 @@ export const ALL_TOOLS = [
   ...GITHUB_TOOLS,       // 8 - list_repos, list_prs, get_pr, list_issues, get_issue, get_file, get_commits, search_code
   ...CHRONICLE_TOOLS,    // 4 - chronicle_add, chronicle_list, chronicle_search, chronicle_stats
   ...PACKET_TOOLS,       // 4 - packet_create, packet_run, packet_list, packet_share
-  // total: 120 (refactor: −6 tools whose work the client model already does; v3.41.0: rh_mcp_balance now lists ALL held tokens via Blockscout (was blind to non-catalog crypto); v3.40.0: RH RPC relay fallback via Convex — works on networks that block robinhood.com; v3.39.1: fix — sell approval target now follows the route (Permit2 for V4, SwapRouter02 for V2/V3); v3.39.0: +Uniswap V2 routing — full V2/V3/V4 best-fill router; v3.38.0: Uniswap V3 routing + launchpad detection folded into rh_safety_check; v3.37.1: RH audit fixes — preview read-only, tx-hash extract, pending nonce, atomic store, crash isolation; v3.37.0: +rh_safety_check; v3.36.0: +RH DCA/TP/SL)
+  ...STAKE_TOOLS,        // 3 - stake_finch_status, stake_finch, unstake_finch (custodial wallet; requires `finch login`)
+  // total: 119 tools as measured by ALL_TOOLS.length - do not hand-maintain a
+  // count in this comment (this one had already drifted to a stale "120"
+  // before staking was even added; ALL_TOOLS.length is the only number that
+  // can't lie). Per-category counts above are best-effort documentation, not
+  // load-bearing anywhere.
 ];
 
 // Build O(1) dispatch map at startup - avoids sequential chained awaits per call
@@ -142,6 +148,7 @@ export const HANDLER_MAP = new Map<string, Handler>([
   ...GITHUB_TOOLS.map(t      => [t.name, handleGithubTool]       as [string, Handler]),
   ...CHRONICLE_TOOLS.map(t   => [t.name, (n: string, a: unknown) => handleChronicle(n, a as Record<string, unknown>)] as [string, Handler]),
   ...PACKET_TOOLS.map(t      => [t.name, (n: string, a: unknown) => handlePacket(n, a as Record<string, unknown>)] as [string, Handler]),
+  ...STAKE_TOOLS.map(t       => [t.name, handleStakeTool]       as [string, Handler]),
 ]);
 
 // `instructions` is returned in the initialize result - it tells the client
@@ -155,9 +162,9 @@ const SERVER_INSTRUCTIONS = [
   "",
   "Tool annotations are set: read-only tools are safe to run without asking;",
   "tools with destructiveHint (deletes, cancels, memory_publish, and anything",
-  "that moves funds - base_mcp_swap/send/lend, rh_mcp_swap, rh_dca_create,",
-  "rh_bracket_create, run_playbook/automation, packet_run) should be confirmed",
-  "with the user before running.",
+  "that moves funds - base_mcp_swap/send, rh_mcp_swap, rh_dca_create,",
+  "rh_bracket_create, run_playbook/automation, packet_run, stake_finch,",
+  "unstake_finch) should be confirmed with the user before running.",
   "",
   "Vault entries are also exposed as resources (finch://vault/<key>); prefer",
   "reading those over a vault_read tool call when you only need the content.",

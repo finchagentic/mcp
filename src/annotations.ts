@@ -101,6 +101,10 @@ const DESTRUCTIVE = new Set<string>([
   "run_automation",
   "run_playbook",
   "packet_run",
+  // money movement (FINCH staking, custodial wallet) - stake locks real value
+  // for a fixed period; unstake moves it (plus rewards) back
+  "stake_finch",
+  "unstake_finch",
 ]);
 
 export function annotationsFor(name: string): Ann {
