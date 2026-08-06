@@ -339,9 +339,9 @@ async function resolveBasename(input: string): Promise<{ address?: string; name?
  *
  * `base_mcp_send` and `base_mcp_swap` sign and broadcast from the user's wallet
  * on the first call — an on-chain transfer that cannot be recalled. The chain's
- * own swap tool (`rh_mcp_swap`) already required confirmation, as do
- * `vault_delete` and `memory_publish`; these two were the outliers, moving real
- * funds with less friction than sharing a workflow. The guard also gives the
+ * own swap tool (`rh_mcp_swap`) already required confirmation, as does
+ * `vault_delete`; these two were the outliers, moving real
+ * funds with less friction than an irreversible delete. The guard also gives the
  * model somewhere to stop when a destination address came from a scraped page
  * or tool output rather than from the user.
  */

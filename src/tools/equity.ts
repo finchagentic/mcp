@@ -197,7 +197,7 @@ export async function handleEquityTool(name: string, args: unknown): Promise<Too
 
   const parsed = Schema.safeParse(args);
   if (!parsed.success) {
-    return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
   }
   const ticker = parsed.data.ticker.trim().toUpperCase();
   const periods = parsed.data.periods ?? 6;

@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
-import { callLLM } from "../llm.js";
 import { callConvex } from "../convex.js";
 
 // ─── Tool schema ──────────────────────────────────────────────────────────────
@@ -10,7 +9,7 @@ export const RESEARCH_CHAIN_TOOLS: Tool[] = [
   {
     name: "research_chain",
     description:
-      "Walk a research topic's timeline. Follows `continues` relations both backward and forward from a starting report, then returns a chronological list with each report's date/title/TL;DR plus an LLM-synthesized 'net evolution' summary calling out what changed at each step.",
+      "Walk a research topic's timeline. Follows `continues` relations both backward and forward from a starting report and returns the chronological list with each report's date/title/TL;DR, plus the rubric for YOU to write the 'net evolution' — what shifted at each step. No API key needed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -24,7 +23,7 @@ export const RESEARCH_CHAIN_TOOLS: Tool[] = [
         },
         synthesize: {
           type: "boolean",
-          description: "Generate an LLM-synthesized 'net evolution' summary at the end. Adds ~30s. Default true.",
+          description: "Append the 'net evolution' rubric after the timeline. Default true. Set false if you only want the raw timeline.",
         },
       },
       required: ["startKey"],
@@ -141,37 +140,31 @@ async function walkChain(startKey: string, maxDepth: number): Promise<ChainEntry
   return [...backward, startEntry, ...forward];
 }
 
-async function synthesizeNetEvolution(chain: ChainEntry[]): Promise<string> {
-  if (chain.length < 2) return "";
+// The timeline is the tool's real work: walking `continues` relations in both
+// directions, loading each entry, extracting its TL;DR and ordering the stops.
+// Reading the arc off that timeline is model work, so the rubric travels with
+// the data instead of a server-side summary the caller can't steer.
+function evolutionRubric(chain: ChainEntry[]): string {
+  const spanDays =
+    chain[0].updatedAt && chain[chain.length - 1].updatedAt
+      ? Math.round((chain[chain.length - 1].updatedAt! - chain[0].updatedAt!) / 86_400_000)
+      : null;
 
-  const stops = chain.map((e, i) => {
-    const date = e.updatedAt ? new Date(e.updatedAt).toISOString().slice(0, 10) : "unknown";
-    return `[${i + 1}] (${date}) ${e.title}\nTL;DR: ${e.tldr.slice(0, 200)}`;
-  }).join("\n\n");
-
-  const sys = "You are a research analyst summarizing the evolution of a thesis across multiple research reports. Be concise, specific, and emphasize what CHANGED - not what stayed the same.";
-
-  const user = `Below is a chronological chain of research reports on the same topic. Write a 4-6 sentence summary of how the user's understanding has evolved.
-
-Specifically call out:
-- Position shifts (claim X went from confident to weak, or vice versa)
-- New entities/data points that appeared at specific stops
-- Predictions that came true or were falsified
-- The current state vs the starting state
-
-DO NOT just list the reports. Synthesize the arc.
-
-CHAIN (oldest to newest):
-
-${stops}
-
-Write the summary now. Plain prose, no markdown headers.`;
-
-  try {
-    return await callLLM(sys, user, 600, [], 60_000);
-  } catch {
-    return "";
-  }
+  return [
+    `## Write the net evolution from this`,
+    ``,
+    `4-6 sentences on how the understanding evolved across these ${chain.length} stops` +
+      `${spanDays !== null ? ` (${spanDays} day${spanDays === 1 ? "" : "s"})` : ""}. Call out:`,
+    ``,
+    `- **Position shifts** — a claim that went from confident to weak, or the reverse`,
+    `- **New entities or data points** and the exact stop where they appeared`,
+    `- **Predictions** that came true or were falsified`,
+    `- **Current state vs starting state**`,
+    ``,
+    `Synthesize the arc — do not list the reports back. Emphasise what CHANGED, not what held steady. ` +
+      `Each TL;DR above is truncated: if the arc turns on a detail you can't see, read the full entry with ` +
+      `\`vault_read\` before writing.`,
+  ].join("\n");
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -181,7 +174,7 @@ export async function handleResearchChain(name: string, args: unknown): Promise<
 
   const parsed = InputSchema.safeParse(args);
   if (!parsed.success) {
-    return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
   }
 
   const { startKey } = parsed.data;
@@ -240,12 +233,10 @@ export async function handleResearchChain(name: string, args: unknown): Promise<
     }
   }
 
-  // Optional LLM synthesis
-  let netEvolution = "";
   if (synthesize && chain.length >= 2) {
-    log(`✍️  Synthesizing net evolution across ${chain.length} stops...`);
-    netEvolution = await synthesizeNetEvolution(chain);
+    log(`📐 Attached the net-evolution rubric for ${chain.length} stops.`);
   }
+  const netEvolution = synthesize && chain.length >= 2 ? evolutionRubric(chain) : "";
 
   const header = [
     `🧬 **Research Chain** - ${chain.length} reports across the timeline`,
@@ -262,9 +253,7 @@ export async function handleResearchChain(name: string, args: unknown): Promise<
     ``,
   ].filter(Boolean).join("\n");
 
-  const evolutionBlock = netEvolution
-    ? `\n## 🌱 Net Evolution\n\n${netEvolution.trim()}\n`
-    : "";
+  const evolutionBlock = netEvolution ? `\n---\n\n${netEvolution}\n` : "";
 
   const text = [
     header,

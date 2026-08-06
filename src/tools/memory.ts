@@ -432,27 +432,6 @@ export const MEMORY_TOOLS: Tool[] = [
     },
   },
   {
-    name: "memory_publish",
-    description:
-      "IRREVERSIBLE, PUBLIC. Publish a memory snippet to the Memory Marketplace — visible to " +
-      "ALL Finch users at /memory-marketplace. Reversible with vault_unpublish, but only for " +
-      "future discovery — anyone who already read it keeps what they saw. " +
-      "Requires confirm: true. Never call this on the user's behalf without them explicitly asking " +
-      "to publish; re-read the content for anything private (keys, addresses, personal details) first. " +
-      "Saved as a public vault entry (type=memory).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        title:      { type: "string",                   description: "Short title for the memory (shown publicly in the marketplace)" },
-        content:    { type: "string",                   description: "The memory content to share — this becomes PUBLIC" },
-        tags:       { type: "array", items: { type: "string" }, description: "Optional tags (e.g. ['DeFi', 'Base', 'research'])" },
-        authorName: { type: "string",                   description: "Public display name. Defaults to \"Anonymous\" — do NOT pass a wallet address unless the user asks to be identified." },
-        confirm:    { type: "boolean",                  description: "Must be true to publish. Guards against accidental public disclosure." },
-      },
-      required: ["title", "content", "confirm"],
-    },
-  },
-  {
     name: "memory_consolidate",
     description:
       "Clean up fragmented knowledge after heavy research sessions. Two-pass, no API key needed. " +
@@ -561,7 +540,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
   switch (name) {
     case "memory_add": {
       const parsed = AddSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       const { content, title, tags, sourceUrl, force } = parsed.data;
 
@@ -628,7 +607,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
 
     case "memory_search": {
       const parsed = SearchSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       const { query, limit = 10 } = parsed.data;
       // Over-fetch so post-decay ranking still has enough material.
@@ -717,7 +696,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
 
     case "memory_context": {
       const parsed = ContextSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       const { topic, limit = 8 } = parsed.data;
       // v3.25.1: use hybrid retrieval so context loading picks up exact-token
@@ -782,7 +761,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
 
     case "memory_list": {
       const parsed = ListSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const { limit = 20, tag } = parsed.data;
       const localList = getLocalMemoryConfig();
       let results: any[];
@@ -809,7 +788,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
 
     case "memory_delete": {
       const parsed = DeleteMemSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       if ((args as { confirm?: boolean })?.confirm !== true) {
         return {
           content: [{
@@ -838,7 +817,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
 
     case "memory_insight": {
       const parsed = InsightSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       const { topic, depth = "standard" } = parsed.data;
       const memLimit = depth === "deep" ? 15 : depth === "quick" ? 5 : 8;
@@ -940,7 +919,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
 
     case "memory_extract": {
       const parsed = ExtractSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const { text, facts, source = "extract" } = parsed.data;
 
       // ── PASS 1: hand the text back with the extraction rubric ───────────
@@ -1004,7 +983,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
 
     case "memory_consolidate": {
       const parsed = ConsolidateSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const { topic, limit = 12, summary } = parsed.data;
       const localConsolidateCfg = getLocalMemoryConfig();
 
@@ -1072,65 +1051,22 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       };
     }
 
-    case "memory_publish": {
-      const { title, content, tags, authorName, confirm } = args as {
-        title: string; content: string; tags?: string[]; authorName?: string; confirm?: boolean;
-      };
-      if (!title || !content) return { content: [{ type: "text", text: "title and content are required" }], isError: true };
-      if (confirm !== true) {
-        return {
-          content: [{
-            type: "text",
-            text:
-              "Refusing to publish: this makes the content **public to all Finch users**. " +
-              "It can be hidden again with `vault_unpublish`, but not un-read. Review the content " +
-              "for keys, addresses and personal details, then pass `confirm: true`.",
-          }],
-          isError: true,
-        };
-      }
-      if (authorName && /^0x[a-fA-F0-9]{40}$/.test(authorName.trim())) {
-        return {
-          content: [{
-            type: "text",
-            text:
-              "Refusing to publish with a wallet address as the author name — that permanently " +
-              "links your on-chain identity to this public entry. Use a handle, or omit authorName " +
-              "to publish as \"Anonymous\".",
-          }],
-          isError: true,
-        };
-      }
-
-      const data = await callConvex("/vault/save", "POST", {
-        type:       "memory",
-        title,
-        content,
-        tags:       tags ?? [],
-        isPublic:   true,
-        authorName: authorName ?? "Anonymous",
-        commitMsg:  "published to marketplace",
-      }, "vault_save") as { key?: string; version?: number; error?: string };
-
-      if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
-      return {
-        content: [{
-          type: "text",
-          text: [
-            `🧠 **Memory Published**`,
-            ``,
-            `**Title:** ${title}`,
-            `**Key:** \`${data.key}\``,
-            `**Version:** ${data.version ?? 1}`,
-            ``,
-            `Now visible at the Memory Marketplace in the Finch app.`,
-            ``,
-            `Make it private again: \`vault_unpublish key: "${data.key}"\``,
-            `That stops future discovery. Anyone who already read it keeps what they saw.`,
-          ].join("\n"),
-        }],
-      };
-    }
+    // memory_publish was removed - it was broken two levels deep. The tool
+    // called POST /vault/save with isPublic/authorName fields that the
+    // handler silently dropped (only type/title/content/key/contentType/
+    // agentId/tags/commitMsg/metadata are forwarded to vault.saveEntry - see
+    // app/convex/http.ts), so `published` was never actually set true; the
+    // real publishEntry mutation (POST /vault/publish) existed but this tool
+    // never called it. And even a correctly-wired publish would have done
+    // nothing observable: nothing anywhere reads the `published` field for
+    // cross-user browsing - no /vault/community route (dangling comment
+    // only, same pattern as the other removed routes), no backend query for
+    // it, no "Memory Marketplace" page in app/src. The tool asked users to
+    // accept an "IRREVERSIBLE, PUBLIC" risk for a marketplace that doesn't
+    // exist at any layer. Re-add only alongside building the actual
+    // discovery path: a community-browse query + route + UI that reads
+    // `published: true` entries. vault_unpublish is left in place - it's a
+    // correct, harmless no-op until then.
 
     default:
       return null;

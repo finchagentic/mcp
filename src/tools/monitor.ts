@@ -118,7 +118,7 @@ export function buildMonitorList(
 export async function handleMonitorTool(name: string, args: unknown): Promise<ToolResult | null> {
   if (name === "schedule_research") {
     const parsed = CreateSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
     const key = getKey();
     if (!key) return noKeyMsg();
 
@@ -307,7 +307,7 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
 
   if (name === "cancel_monitor") {
     const parsed = CancelSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
     if ((args as { confirm?: boolean })?.confirm !== true) {
       return {
         content: [{

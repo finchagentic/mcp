@@ -34,14 +34,17 @@ const C = {
   bold:   "\x1b[1m",
 };
 
+// Was still spelling out the pre-rebrand "NOELCLAW" wordmark in ASCII art -
+// leftover from before the Finch rebrand, never caught because nothing
+// visually diffs a banner string.
 const BANNER = `
 ${C.cyan}
-  ███╗   ██╗ ██████╗ ███████╗██╗      ██████╗██╗      █████╗ ██╗    ██╗
-  ████╗  ██║██╔═══██╗██╔════╝██║     ██╔════╝██║     ██╔══██╗██║    ██║
-  ██╔██╗ ██║██║   ██║█████╗  ██║     ██║     ██║     ███████║██║ █╗ ██║
-  ██║╚██╗██║██║   ██║██╔══╝  ██║     ██║     ██║     ██╔══██║██║███╗██║
-  ██║ ╚████║╚██████╔╝███████╗███████╗╚██████╗███████╗██║  ██║╚███╔███╔╝
-  ╚═╝  ╚═══╝ ╚═════╝ ╚══════╝╚══════╝ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+  ███████╗██╗███╗   ██╗ ██████╗██╗  ██╗
+  ██╔════╝██║████╗  ██║██╔════╝██║  ██║
+  █████╗  ██║██╔██╗ ██║██║     ███████║
+  ██╔══╝  ██║██║╚██╗██║██║     ██╔══██║
+  ██║     ██║██║ ╚████║╚██████╗██║  ██║
+  ╚═╝     ╚═╝╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝
 ${C.reset}`;
 
 function line(label: string, value: string, color = C.cyan) {
@@ -91,10 +94,9 @@ async function main() {
     { label: "Base MCP",   match: n => n.startsWith("base_mcp_") },
     { label: "RH MCP",     match: n => n.startsWith("rh_") },
     { label: "Automation", match: n => /^(create_automation|list_automations|pause_automation|delete_automation|get_automation_runs|run_automation)$/.test(n) },
-    { label: "Framework",  match: n => /^(list_playbooks|run_playbook|get_finch_ledger)$/.test(n) },
-    { label: "Vault",      match: n => n.startsWith("vault_") },
+    { label: "Vault",      match: n => n.startsWith("vault_") || n === "code_session_save" || n === "list_projects" },
     { label: "Wallet",     match: n => /^(get_wallet_address|get_wallet_balance|wallet_sign_message)$/.test(n) },
-    { label: "Staking",    match: n => /^(stake_finch|unstake_finch|stake_finch_status)$/.test(n) },
+    { label: "Staking",    match: n => /^(stake_finch|unstake_finch|stake_finch_status|stake_auto_restake|claim_vested_rewards)$/.test(n) },
     { label: "MiroShark",  match: n => n.startsWith("miroshark_") },
     { label: "Scanner",    match: n => /^(scan_market|score_token|check_token)$/.test(n) },
     { label: "Agents",     match: n => n.startsWith("agent_") },

@@ -24,6 +24,20 @@ export const RH_RPC =
   process.env.FINCH_RH_RPC_URL ??
   "https://rpc.mainnet.chain.robinhood.com";
 
+/** Host only, for display in tool output - never the full RH_RPC. An
+ *  operator can point ROBINHOOD_RPC_URL/RH_RPC_URL at a keyed provider
+ *  (same pattern app/convex just fixed for its own Alchemy-key leak risk -
+ *  a `.../v2/<key>`-style URL echoed verbatim into a tool response lands the
+ *  key in chat transcripts/client logs). Falls back to the raw value only
+ *  if it isn't a parseable URL, which should never happen in practice. */
+function rhRpcDisplay(): string {
+  try {
+    return new URL(RH_RPC).host;
+  } catch {
+    return "(configured)";
+  }
+}
+
 export const RH_EXPLORER = "https://robinhoodchain.blockscout.com";
 const NATIVE_ETH = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
 const RH_PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
@@ -796,7 +810,7 @@ async function fetchRhBalances(address: string): Promise<string> {
   ];
   if (holdings.length === 0) lines.push(`- (no token balances)`);
   else for (const h of holdings) lines.push(`- ${h.symbol}: ${h.bal}  \`${h.address}\``);
-  lines.push(``, `_RPC: ${RH_RPC}_`, `_Explorer: ${RH_EXPLORER}/address/${address}_`);
+  lines.push(``, `_RPC: ${rhRpcDisplay()}_`, `_Explorer: ${RH_EXPLORER}/address/${address}_`);
   return lines.join("\n");
 }
 
@@ -1285,7 +1299,7 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
           "",
           `**Wallet**: \`${addr ?? "(not configured — run finch login / first tool)"}\``,
           `**ETH on RH (gas)**: ${eth}`,
-          `**RPC**: ${RH_RPC}`,
+          `**RPC**: ${rhRpcDisplay()}`,
           `**Explorer**: ${RH_EXPLORER}`,
           `**Catalog**: ${RH_STOCKS.length} stocks (AAPL…USAR) + any RH-chain crypto via DexScreener`,
           "",

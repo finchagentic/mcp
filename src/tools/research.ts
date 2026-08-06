@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
 import { callConvex } from "../convex.js";
+import { assertPublicUrl, refuseUrlText } from "../public-url.js";
 
 const FC_BASE = "https://api.firecrawl.dev/v1";
 
@@ -67,12 +68,12 @@ async function firecrawlScrape(url: string): Promise<string | null> {
     } catch { /* fall through to backend proxy */ }
   }
 
-  // Priority 2: route through Noelclaw backend (session-token authed, backend
+  // Priority 2: route through Finch backend (session-token authed, backend
   // pays for the Firecrawl call). The backend returns 503 if it doesn't have
   // FIRECRAWL_API_KEY set either, in which case web_scrape silently falls
   // through to basicFetch below.
   try {
-    const data = await callConvex("/research/firecrawl-scrape", "POST", { url }, "web_scrape_proxy", 25_000);
+    const data = await callConvex("/research/firecrawl-scrape", "POST", { url }, "web_scrape", 25_000);
     if (data?.markdown) return data.markdown as string;
   } catch { /* fall through */ }
 
@@ -82,7 +83,7 @@ async function firecrawlScrape(url: string): Promise<string | null> {
 async function basicFetch(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; NoelclawBot/1.0)" },
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; FinchBot/1.0)" },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
@@ -102,8 +103,13 @@ async function basicFetch(url: string): Promise<string | null> {
 export async function handleResearchTool(name: string, args: unknown): Promise<ToolResult | null> {
   if (name === "web_scrape") {
     const parsed = ScrapeSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
     const { url, focus } = parsed.data;
+
+    const unsafe = await assertPublicUrl(url);
+    if (unsafe) {
+      return { content: [{ type: "text", text: refuseUrlText(url, unsafe) }], isError: true };
+    }
 
     let content = await firecrawlScrape(url);
     const source = content ? "Firecrawl" : "basic fetch";
@@ -121,10 +127,10 @@ export async function handleResearchTool(name: string, args: unknown): Promise<T
 
   if (name === "web_search") {
     const parsed = SearchSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
     const { query, limit = 5 } = parsed.data;
 
-    // Priority 1: user BYOK direct path. Priority 2: Noelclaw proxy.
+    // Priority 1: user BYOK direct path. Priority 2: Finch proxy.
     // Same data shape so the formatting code below is identical for both.
     const key = process.env.FIRECRAWL_API_KEY;
     let results: any[] | null = null;
@@ -151,7 +157,7 @@ export async function handleResearchTool(name: string, args: unknown): Promise<T
 
     if (!results) {
       try {
-        const data = await callConvex("/research/firecrawl-search", "POST", { query, limit }, "web_search_proxy", 30_000);
+        const data = await callConvex("/research/firecrawl-search", "POST", { query, limit }, "web_search", 30_000);
         results = data?.results ?? [];
       } catch (err: any) {
         const msg = err?.message ?? String(err);
@@ -164,7 +170,7 @@ export async function handleResearchTool(name: string, args: unknown): Promise<T
               `Tried backend proxy: ${msg.slice(0, 200)}`,
               lastErr ? `Direct call also failed: ${lastErr}` : "",
               ``,
-              `Fix: either run \`/login\` so the Noelclaw backend can pay, or set FIRECRAWL_API_KEY in your MCP env block.`,
+              `Fix: either run \`/login\` so the Finch backend can pay, or set FIRECRAWL_API_KEY in your MCP env block.`,
             ].filter(Boolean).join("\n"),
           }],
           isError: true,

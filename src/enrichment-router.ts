@@ -202,7 +202,7 @@ async function techEnrich(query: string): Promise<string | null> {
     const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&order=desc&per_page=6`;
     const res = await fetch(url, {
       signal: AbortSignal.timeout(8_000),
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "noelclaw-mcp" },
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "finch-mcp" },
     });
     if (res.ok) {
       const d = (await res.json()) as any;

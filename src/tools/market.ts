@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
 import { cachedFetch } from "../_http-cache.js";
+import { pickTokenPair } from "../dex-pair.js";
 
 const COINGECKO = "https://api.coingecko.com/api/v3";
 
@@ -32,7 +33,7 @@ async function resolveTokenId(query: string): Promise<{ id: string; symbol: stri
     const res = await cgFetch(`/search?query=${encodeURIComponent(query)}`);
     const coin = res.coins?.[0];
     if (coin?.id) return { id: coin.id, symbol: coin.symbol?.toUpperCase() ?? upper };
-  } catch {}
+  } catch { /* search failed - fall through to null */ }
   return null;
 }
 
@@ -52,6 +53,31 @@ function fmtB(n: number | null | undefined): string {
   if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
   if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
   return `$${fmt(n)}`;
+}
+
+const BASE_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+async function fetchDexscreenerBaseToken(tokenAddress: string): Promise<any | null> {
+  const res = await cachedFetch(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) return null;
+  const data = JSON.parse(res.text);
+  const pairs: any[] = (data?.pairs ?? []).filter((p: any) => p.chainId === "base");
+  if (!pairs.length) return null;
+  // Deepest pair that our token is actually the BASE of — the deepest pair
+  // overall is often one where it is the quote, and every figure on such a pair
+  // belongs to the other token.
+  return pickTokenPair(pairs, tokenAddress);
+}
+
+async function resolveCoingeckoIdByContract(tokenAddress: string): Promise<string | null> {
+  try {
+    const res = await cgFetch(`/coins/base/contract/${tokenAddress}`);
+    return res?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export const MARKET_TOOLS: Tool[] = [
@@ -120,12 +146,135 @@ export const MARKET_TOOLS: Tool[] = [
       required: ["token"],
     },
   },
+  {
+    name: "get_base_token_data",
+    description:
+      "Get live market data for any Base-chain token by contract address, sourced from DexScreener: " +
+      "price, 1h/6h/24h change, volume, liquidity, market cap, FDV, pair age, and website/social links. " +
+      "Also checks whether the token is listed on CoinGecko (needed for historical chart data via token_history). " +
+      "Works for any Base token including small/new ones that aren't in CoinGecko's listings - use this " +
+      "instead of get_token_data when you have a contract address rather than a well-known symbol.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tokenAddress: {
+          type: "string",
+          description: "Base-chain ERC-20 contract address, e.g. '0x4b524015d54a27d4472f5c59c570730d69499ba3'",
+        },
+      },
+      required: ["tokenAddress"],
+    },
+  },
 ];
 
 const GetMarketDataSchema = z.object({ token: z.string().optional() });
 const GetTokenDataSchema = z.object({ question: z.string().min(1) });
 const CompareTokensSchema = z.object({ tokens: z.array(z.string()).min(2).max(5) });
 const TokenHistorySchema = z.object({ token: z.string().min(1), days: z.number().positive().optional() });
+const GetBaseTokenDataSchema = z.object({
+  tokenAddress: z.string().regex(BASE_ADDRESS_RE, "Must be a valid 0x-prefixed 40-hex-char Base contract address"),
+});
+
+// Pure map from a CoinGecko /coins/markets row to the get_token_data
+// structuredContent payload. Kept pure so text + structured output share one
+// source and it's unit-testable without a network call.
+export function buildTokenSnapshot(c: any): Record<string, unknown> {
+  return {
+    symbol:        c.symbol?.toUpperCase() ?? null,
+    name:          c.name ?? null,
+    priceUsd:      c.current_price ?? null,
+    change24hPct:  c.price_change_percentage_24h ?? null,
+    marketCapUsd:  c.market_cap ?? null,
+    marketCapRank: c.market_cap_rank ?? null,
+    volume24hUsd:  c.total_volume ?? null,
+    high24hUsd:    c.high_24h ?? null,
+    low24hUsd:     c.low_24h ?? null,
+    athUsd:        c.ath ?? null,
+    athChangePct:  c.ath_change_percentage ?? null,
+    source:        "coingecko",
+  };
+}
+
+// Pure map from a DexScreener pair (+ optional CoinGecko id) to the
+// get_base_token_data structuredContent payload.
+export function buildBaseTokenSnapshot(address: string, pair: any, coingeckoId: string | null): Record<string, unknown> {
+  const ch = pair.priceChange ?? {};
+  const pairAgeDays = pair.pairCreatedAt ? Math.floor((Date.now() - pair.pairCreatedAt) / 86_400_000) : null;
+  return {
+    address,
+    symbol:            pair.baseToken?.symbol ?? null,
+    name:              pair.baseToken?.name ?? null,
+    priceUsd:          pair.priceUsd ? parseFloat(pair.priceUsd) : null,
+    change1hPct:       ch.h1 ?? null,
+    change6hPct:       ch.h6 ?? null,
+    change24hPct:      ch.h24 ?? null,
+    volume24hUsd:      pair.volume?.h24 ?? null,
+    liquidityUsd:      pair.liquidity?.usd ?? null,
+    marketCapUsd:      pair.marketCap ?? null,
+    fdvUsd:            pair.fdv ?? null,
+    pairAgeDays,
+    listedOnCoingecko: !!coingeckoId,
+    coingeckoId:       coingeckoId ?? null,
+    source:            "dexscreener",
+  };
+}
+
+// Pure map for compare_tokens: CoinGecko rows (+ unresolved symbols) → the
+// structuredContent payload. Includes 7d change, which the single-token
+// snapshot doesn't carry.
+export function buildTokenComparison(data: any[], unknown: string[]): Record<string, unknown> {
+  return {
+    count: data.length,
+    unknown,
+    tokens: data.map((c) => ({
+      symbol:        c.symbol?.toUpperCase() ?? null,
+      name:          c.name ?? null,
+      priceUsd:      c.current_price ?? null,
+      change24hPct:  c.price_change_percentage_24h ?? null,
+      change7dPct:   c.price_change_percentage_7d_in_currency ?? null,
+      marketCapUsd:  c.market_cap ?? null,
+      marketCapRank: c.market_cap_rank ?? null,
+      volume24hUsd:  c.total_volume ?? null,
+      athChangePct:  c.ath_change_percentage ?? null,
+    })),
+  };
+}
+
+export function buildMarketOverview(global: any, fg: any, trendCoins: any[]): Record<string, unknown> {
+  return {
+    fearGreedValue: fg ? Number(fg.value) : null,
+    fearGreedClass: fg?.value_classification ?? null,
+    totalMarketCapUsd: global?.total_market_cap?.usd ?? null,
+    marketCap24hChangePct: global?.market_cap_change_percentage_24h_usd ?? null,
+    btcDominancePct: global?.market_cap_percentage?.btc ?? null,
+    ethDominancePct: global?.market_cap_percentage?.eth ?? null,
+    defiTvlUsd: global?.total_value_locked?.usd ?? null,
+    activeCoins: global?.active_cryptocurrencies ?? null,
+    trending: (trendCoins ?? []).slice(0, 7).map((t) => ({
+      symbol: t.item?.symbol ?? null,
+      name: t.item?.name ?? null,
+      rank: t.item?.market_cap_rank ?? null,
+    })),
+  };
+}
+
+export function buildTokenHistory(
+  symbol: string, days: number, current: any,
+  openPrice: number, closePrice: number, periodHigh: number, periodLow: number,
+  candles: [number, number, number, number, number][],
+): Record<string, unknown> {
+  return {
+    symbol, days,
+    currentPriceUsd: current?.current_price ?? null,
+    openPrice, closePrice,
+    periodChangePct: openPrice ? ((closePrice - openPrice) / openPrice) * 100 : null,
+    periodHighUsd: periodHigh,
+    periodLowUsd: periodLow,
+    candles: candles.slice(-30).map(([ts, o, h, l, cl]) => ({
+      date: new Date(ts).toISOString().slice(0, 10), open: o, high: h, low: l, close: cl,
+    })),
+  };
+}
 
 export interface MarketSnapshot {
   btc: number; eth: number; sol: number;
@@ -153,7 +302,7 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
   switch (name) {
     case "get_market_data": {
       const parsed = GetMarketDataSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       const { token } = parsed.data;
 
@@ -161,10 +310,7 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
         const resolved = await resolveTokenId(token);
         if (!resolved) return { content: [{ type: "text", text: `Token not found: "${token}". Try a full name like "pepe" or a known symbol.` }], isError: true };
         const { id, symbol: sym } = resolved;
-        const [data, trending] = await Promise.all([
-          cgFetch(`/coins/markets?vs_currency=usd&ids=${id}&sparkline=false&price_change_percentage=24h`),
-          cgFetch("/search/trending"),
-        ]);
+        const data = await cgFetch(`/coins/markets?vs_currency=usd&ids=${id}&sparkline=false&price_change_percentage=24h`);
         const c = data[0];
         if (!c) return { content: [{ type: "text", text: `No data for ${sym}` }], isError: true };
         const sign = (c.price_change_percentage_24h ?? 0) >= 0 ? "+" : "";
@@ -217,7 +363,7 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
 
     case "get_token_data": {
       const parsed = GetTokenDataSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       const q = parsed.data.question;
       // Try to extract a known symbol first, then fall back to search
@@ -242,12 +388,15 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
         "",
         `_Source: CoinGecko · ${new Date().toUTCString()}_`,
       ];
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        structuredContent: buildTokenSnapshot(c),
+      };
     }
 
     case "compare_tokens": {
       const parsed = CompareTokensSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       const syms = parsed.data.tokens.map(t => t.toUpperCase());
       const ids = syms.map(s => SYMBOL_TO_ID[s]).filter(Boolean);
@@ -275,7 +424,10 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
         return `| **${sym}** | ${fmtPrice(c.current_price)} | ${s(ch24)} | ${s(ch7d)} | ${fmtB(c.market_cap)} | ${fmtB(c.total_volume)} | ${fmt(athPct)}% |`;
       });
 
-      return { content: [{ type: "text", text: [...header, ...rows].join("\n") }] };
+      return {
+        content: [{ type: "text", text: [...header, ...rows].join("\n") }],
+        structuredContent: buildTokenComparison(data, unknown),
+      };
     }
 
     case "market_overview": {
@@ -296,7 +448,6 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
       const ethDom = global?.market_cap_percentage?.eth;
       const mcap24hChange = global?.market_cap_change_percentage_24h_usd;
 
-      const fgLabel = fg ? `${fg.value}/100 - ${fg.value_classification}` : "unavailable";
       const fgEmoji = fg ? (Number(fg.value) >= 75 ? "🟢 Extreme Greed" : Number(fg.value) >= 55 ? "🟢 Greed" : Number(fg.value) >= 45 ? "🟡 Neutral" : Number(fg.value) >= 25 ? "🔴 Fear" : "🔴 Extreme Fear") : "";
 
       const lines = [
@@ -320,12 +471,12 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
         }
       }
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildMarketOverview(global, fg, trendCoins) };
     }
 
     case "token_history": {
       const parsed = TokenHistorySchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       const days = parsed.data.days ?? 7;
       const resolved = await resolveTokenId(parsed.data.token);
@@ -371,7 +522,75 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
         }),
       ];
 
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        structuredContent: buildTokenHistory(sym, days, c, openPrice, closePrice, periodHigh, periodLow, candles),
+      };
+    }
+
+    case "get_base_token_data": {
+      const parsed = GetBaseTokenDataSchema.safeParse(args);
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+
+      const address = parsed.data.tokenAddress.toLowerCase();
+      const [pair, coingeckoId] = await Promise.all([
+        fetchDexscreenerBaseToken(address),
+        resolveCoingeckoIdByContract(address),
+      ]);
+
+      if (!pair) {
+        return {
+          content: [{ type: "text", text: `No Base-chain liquidity pair found for ${address}. It may not be a Base token, may have no active DEX pair, or the address may be wrong.` }],
+          isError: true,
+        };
+      }
+
+      const priceUsd = pair.priceUsd ? parseFloat(pair.priceUsd) : null;
+      const ch = pair.priceChange ?? {};
+      const sign = (n: number | null | undefined) => (typeof n === "number" && n >= 0 ? "+" : "");
+      const pairAgeDays = pair.pairCreatedAt ? Math.floor((Date.now() - pair.pairCreatedAt) / 86400000) : null;
+
+      const lines = [
+        `**${pair.baseToken?.symbol ?? "?"} - ${pair.baseToken?.name ?? "Unknown token"}** (Base)`,
+        `Contract: \`${address}\``,
+        `Price: ${fmtPrice(priceUsd)}`,
+        `Change: 1h ${sign(ch.h1)}${fmt(ch.h1)}%  ·  6h ${sign(ch.h6)}${fmt(ch.h6)}%  ·  24h ${sign(ch.h24)}${fmt(ch.h24)}%`,
+        `Volume 24h: ${fmtB(pair.volume?.h24)}`,
+        `Liquidity: ${fmtB(pair.liquidity?.usd)}`,
+        `Market Cap: ${fmtB(pair.marketCap)}`,
+        `FDV: ${fmtB(pair.fdv)}`,
+      ];
+      if (pairAgeDays != null) lines.push(`Pair age: ${pairAgeDays}d`);
+      if (pair.derivedFromQuoteSide) {
+        lines.push(
+          "",
+          `_This token only appears as the quote side of its pools, so the price above is derived ` +
+            `from the pair ratio rather than quoted directly. Market cap, FDV, 24h change and trade ` +
+            `counts are omitted because on such a pair they describe the other token._`
+        );
+      }
+
+      lines.push(
+        "",
+        coingeckoId
+          ? `📈 Listed on CoinGecko as \`${coingeckoId}\` - historical chart data is available (use token_history).`
+          : `⚠️ Not listed on CoinGecko - no historical chart available, live DexScreener data only.`
+      );
+
+      const websites: any[] = pair.info?.websites ?? [];
+      const socials: any[] = pair.info?.socials ?? [];
+      if (websites.length || socials.length) {
+        lines.push("", "**Links**");
+        for (const w of websites) lines.push(`• ${w.label || "Website"}: ${w.url}`);
+        for (const s of socials) lines.push(`• ${s.type}: ${s.url}`);
+      }
+
+      lines.push("", `_Source: DexScreener${coingeckoId ? " + CoinGecko" : ""} · ${new Date().toUTCString()}_`);
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        structuredContent: buildBaseTokenSnapshot(address, pair, coingeckoId),
+      };
     }
 
     default:

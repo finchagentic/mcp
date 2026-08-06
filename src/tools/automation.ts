@@ -39,9 +39,9 @@ const CATEGORY_FIX: Record<ErrorCategory, string> = {
   insufficient_balance: "Top up the wallet, lower the per-run amount, or check token allowance.",
   quote_failed:         "Token may have low liquidity. Try a different route, smaller size, or wait and retry.",
   tx_reverted:          "Check token approvals, slippage, and that you have ETH for gas.",
-  rpc_error:             "Transient. Re-run shortly. Set NOELCLAW_RPC_URL to a faster provider if it persists.",
-  auth_error:            "Run `noelclaw login` to refresh session, or re-issue the API key.",
-  config_missing:        "Backend env var likely missing - check noelclaw doctor for the specific config.",
+  rpc_error:             "Transient. Re-run shortly. Set FINCH_RPC_URL to a faster provider if it persists.",
+  auth_error:            "Run `finch login` to refresh session, or re-issue the API key.",
+  config_missing:        "Backend env var likely missing - check finch doctor for the specific config.",
   unknown:               "Unrecognized failure. Open get_automation_runs for the raw error and the chronicle log.",
 };
 
@@ -56,10 +56,18 @@ function categorizeError(err: string | undefined | null): ErrorCategory {
 export const AUTOMATION_TOOLS: Tool[] = [
   {
     name: "create_automation",
-    description: "Create an automation in plain English. Supports DCA, price alerts, conditional buys/sells, and recurring market updates.",
+    description:
+      "Create an automation in plain English. Supports DCA, price alerts, conditional buys/sells, and recurring market updates. " +
+      "A swap/send automation arms UNATTENDED, REPEATING real fund movement (a backend cron fires it going forward, not just once) - " +
+      "requires two calls. First call WITHOUT confirm: returns a preview of the parsed trigger/action, nothing is created yet. " +
+      "Show that preview to the user in plain language and get explicit confirmation. Only then call again with the SAME rawInput " +
+      "and confirm: true to actually create it. Never pass confirm: true on the first call.",
     inputSchema: {
       type: "object",
-      properties: { rawInput: { type: "string", description: "Plain English description of the automation" } },
+      properties: {
+        rawInput: { type: "string", description: "Plain English description of the automation" },
+        confirm: { type: "boolean", description: "Must be true to actually create. Omit or false to get a preview only - nothing is created." },
+      },
       required: ["rawInput"],
     },
   },
@@ -79,11 +87,17 @@ export const AUTOMATION_TOOLS: Tool[] = [
   },
   {
     name: "delete_automation",
-    description: "Permanently delete an automation. Cannot be undone.",
+    description:
+      "PERMANENT. Delete an automation — this cannot be undone. Requires confirm: true. " +
+      "Run list_automations first and show the user which automation (id + name) you are about to " +
+      "remove. If they only want it to stop running, pause_automation is reversible.",
     inputSchema: {
       type: "object",
-      properties: { automationId: { type: "string", description: "Automation ID (from list_automations)" } },
-      required: ["automationId"],
+      properties: {
+        automationId: { type: "string", description: "Automation ID (from list_automations)" },
+        confirm: { type: "boolean", description: "Must be true to delete. Guards against irreversible loss." },
+      },
+      required: ["automationId", "confirm"],
     },
   },
   {
@@ -117,24 +131,86 @@ export const AUTOMATION_TOOLS: Tool[] = [
   },
 ];
 
-const CreateAutomationSchema = z.object({ rawInput: z.string().min(1) });
+const CreateAutomationSchema = z.object({ rawInput: z.string().min(1), confirm: z.boolean().optional() });
 const AutomationIdSchema = z.object({ automationId: z.string().min(1) });
 const RunAutomationSchema = z.object({ automationId: z.string().min(1), dryRun: z.boolean().optional() });
 const RunsSchema = z.object({ automationId: z.string().min(1), limit: z.number().int().min(1).max(100).optional() });
+
+// ── Structured output builders (schemas in output-schemas.ts) ───────────────
+export function buildAutomationList(automations: any[]): Record<string, unknown> {
+  return {
+    count: automations.length,
+    automations: automations.map((a) => ({
+      id: a._id,
+      name: a.name,
+      status: a.status ?? null,
+      triggerType: a.triggerType ?? null,
+      actionType: a.actionType ?? null,
+      totalRuns: a.totalRuns ?? 0,
+      totalSpentUsd: a.totalSpentUsd ?? 0,
+      nextRunAt: a.nextRunAt ?? null,
+      lastError: a.lastError ?? null,
+    })),
+  };
+}
+
+export function buildAutomationRuns(automationId: string, runs: any[]): Record<string, unknown> {
+  return {
+    automationId,
+    count: runs.length,
+    runs: runs.map((r) => ({
+      status: r.status ?? null,
+      triggeredAt: r.triggeredAt ?? null,
+      amountUsd: r.amountUsd ?? null,
+      txHash: r.txHash ?? null,
+      error: r.error ?? null,
+    })),
+  };
+}
 
 export async function handleAutomationTool(name: string, args: unknown): Promise<ToolResult | null> {
   switch (name) {
     case "create_automation": {
       const parsed = CreateAutomationSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: rawInput ${parsed.error.issues[0].message}` }], isError: true };
-      const data = await callConvex("/automations/create", "POST", { rawInput: parsed.data.rawInput }, "create_automation");
-      if (!data.success) return { content: [{ type: "text", text: `Failed: ${data.error}` }], isError: true };
       const triggerLabel: Record<string, string> = {
         schedule: "⏰ Schedule", price_drop_pct: "📉 Price Drop %", price_rise_pct: "📈 Price Rise %",
         price_below: "⬇️ Price Below", price_above: "⬆️ Price Above",
         dominance_below: "📊 Dominance Below", dominance_above: "📊 Dominance Above",
       };
       const actionLabel: Record<string, string> = { swap: "💱 Swap", send: "📤 Send", alert: "🔔 Alert" };
+
+      // Not confirmed yet - dry-run only (backend validates/parses but does
+      // NOT create anything - see http.ts's /automations/create dryRun
+      // branch). A swap/send automation arms unattended, repeating real
+      // fund movement, so it needs a real preview + explicit confirm, same
+      // shape as base_mcp_swap/send - not created blind on the first call.
+      if (parsed.data.confirm !== true) {
+        const preview = await callConvex("/automations/create", "POST", { rawInput: parsed.data.rawInput, dryRun: true }, "create_automation");
+        if (!preview.success) return { content: [{ type: "text", text: `Could not parse this automation: ${preview.error}` }], isError: true };
+        const moneyMoving = preview.actionType === "swap" || preview.actionType === "send";
+        return {
+          content: [{
+            type: "text",
+            text: [
+              `**Preview - nothing created yet**`, ``,
+              `**Trigger:** ${triggerLabel[preview.triggerType] ?? preview.triggerType}`,
+              `**Action:** ${actionLabel[preview.actionType] ?? preview.actionType}`,
+              preview.fromToken && preview.toToken ? `**Swap:** ${preview.amountUsd ? `$${preview.amountUsd}` : `${preview.amountPct}%`} ${preview.fromToken} → ${preview.toToken}` : ``,
+              preview.toAddress ? `**Send:** ${preview.amountUsd ? `$${preview.amountUsd}` : ""} ${preview.fromToken ?? ""} to \`${preview.toAddress}\`` : ``,
+              preview.priceToken ? `**Price condition:** ${preview.priceToken} ${preview.triggerType?.includes("above") ? "above" : "below"} ${preview.priceThreshold}` : ``,
+              preview.priceBaselineUsd ? `**Baseline price:** $${Number(preview.priceBaselineUsd).toLocaleString()}` : ``,
+              moneyMoving
+                ? `\n⚠️ This will move real funds, repeatedly, unattended, until paused or deleted. Show this preview to the user and get explicit confirmation.`
+                : `\nThis is alert-only - it will not move funds.`,
+              `\nIf this is correct, call create_automation again with the same rawInput and confirm: true.`,
+            ].filter(Boolean).join("\n"),
+          }],
+        };
+      }
+
+      const data = await callConvex("/automations/create", "POST", { rawInput: parsed.data.rawInput }, "create_automation");
+      if (!data.success) return { content: [{ type: "text", text: `Failed: ${data.error}` }], isError: true };
       return {
         content: [{
           type: "text",
@@ -154,7 +230,7 @@ export async function handleAutomationTool(name: string, args: unknown): Promise
       const data = await callConvex("/automations/list", "GET", undefined, "list_automations");
       if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
       const automations: any[] = data.automations ?? [];
-      if (!automations.length) return { content: [{ type: "text", text: "No automations yet. Use `create_automation` to create one." }] };
+      if (!automations.length) return { content: [{ type: "text", text: "No automations yet. Use `create_automation` to create one." }], structuredContent: buildAutomationList([]) };
       const statusIcon: Record<string, string> = { active: "🟢", paused: "⏸️", completed: "✅", error: "❌" };
       const lines: string[] = [`**Your Automations** (${automations.length})`, ""];
       for (const auto of automations) {
@@ -168,7 +244,7 @@ export async function handleAutomationTool(name: string, args: unknown): Promise
         }
         lines.push("");
       }
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildAutomationList(automations) };
     }
 
     case "pause_automation": {
@@ -183,6 +259,18 @@ export async function handleAutomationTool(name: string, args: unknown): Promise
     case "delete_automation": {
       const parsed = AutomationIdSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: automationId ${parsed.error.issues[0].message}` }], isError: true };
+      if ((args as { confirm?: boolean })?.confirm !== true) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              "Refusing to delete: this permanently removes the automation and cannot be undone. " +
+              "Show the user which automation this is, then pass `confirm: true`. To stop it " +
+              "without losing it, use `pause_automation`.",
+          }],
+          isError: true,
+        };
+      }
       const data = await callConvex("/automations/delete", "POST", { automationId: parsed.data.automationId }, "delete_automation");
       if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
       return { content: [{ type: "text", text: "🗑️ Automation deleted." }] };
@@ -197,7 +285,7 @@ export async function handleAutomationTool(name: string, args: unknown): Promise
       if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
 
       const runs: any[] = data.runs ?? [];
-      if (!runs.length) return { content: [{ type: "text", text: "No runs yet for this automation." }] };
+      if (!runs.length) return { content: [{ type: "text", text: "No runs yet for this automation." }], structuredContent: buildAutomationRuns(automationId, []) };
 
       const statusIcon: Record<string, string> = { success: "✅", failed: "❌", skipped: "⏭️" };
       const lines = [`**Run History** (${runs.length} shown)`, ""];
@@ -220,7 +308,7 @@ export async function handleAutomationTool(name: string, args: unknown): Promise
         lines.push("", `**Top failure cause:** ${CATEGORY_BADGE[top[0]]} (${top[1]} run${top[1] !== 1 ? "s" : ""})`);
         lines.push(`→ ${CATEGORY_FIX[top[0]]}`);
       }
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildAutomationRuns(automationId, runs) };
     }
 
     case "run_automation": {

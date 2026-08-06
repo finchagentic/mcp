@@ -1,13 +1,13 @@
 # Security Policy
 
-The NoelClaw team takes security seriously. We appreciate the community's
+The Finch team takes security seriously. We appreciate the community's
 efforts in responsibly disclosing vulnerabilities. This policy describes how to
 report issues, what is in scope, and the protections we have in place.
 
 ## Supported Versions
 
 Security updates are applied to the latest published version of
-`@noelclaw/mcp` on npm. Please update to the latest version before reporting.
+`@finchagentic/mcp` on npm. Please update to the latest version before reporting.
 
 | Version | Supported          |
 |---------|--------------------|
@@ -19,7 +19,7 @@ Security updates are applied to the latest published version of
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
 Please report suspected vulnerabilities privately to
-**security@noelclaw.com** with the following information:
+**security@finchagentic.com** with the following information:
 
 1. A description of the issue and its potential impact.
 2. The affected component (MCP server, webapp, Convex backend — see Scope).
@@ -40,11 +40,11 @@ anonymous.
 
 ### In scope
 
-- **MCP server** (`@noelclaw/mcp`) — the published npm package, the `noelclaw`
+- **MCP server** (`@finchagentic/mcp`) — the published npm package, the `finch`
   CLI, tool implementations, and the tool routing layer (`src/server.ts`,
   `src/tools/*`).
-- **Webapp** — the React frontend at [app.noelclaw.com](https://app.noelclaw.com)
-  and any NoelClaw-served assets.
+- **Webapp** — the React frontend at [app.finchagentic.com](https://app.finchagentic.com)
+  and any Finch-served assets.
 - **Convex backend** — serverless functions, HTTP routes (`convex/http.ts`),
   schema (`convex/schema.ts`), auth actions (`convex/authActions.ts`), and
   cron jobs (`convex/crons.ts`).
@@ -56,7 +56,7 @@ anonymous.
 - Vulnerabilities in third-party dependencies that are already publicly
   disclosed and tracked via GitHub Security Advisories / Dependabot — report
   those upstream.
-- Issues that require social engineering of NoelClaw staff or users.
+- Issues that require social engineering of Finch staff or users.
 - Self-XSS or clickjacking that only affects the reporter's own session.
 - Findings from automated scanners without a demonstrated, reproducible impact.
 
@@ -73,7 +73,7 @@ The following protections are in place across the stack:
   produces a 64-character hex session token. Tokens are validated server-side
   via `checkMcpAuth()` on every HTTP route.
 - **bcrypt** password-style hashing for credentials and API key validation
-  (`noel_sk_*` keys are validated by SHA-256 hash, never stored in cleartext).
+  (`finch_sk_*` keys are validated by SHA-256 hash, never stored in cleartext).
 
 ### DeFi safety
 
@@ -111,5 +111,5 @@ The following protections are in place across the stack:
 
 ## Contact
 
-- Security reports: **security@noelclaw.com**
-- General questions: [github.com/noelclaw/mcp/issues](https://github.com/noelclaw/mcp/issues)
+- Security reports: **security@finchagentic.com**
+- General questions: [github.com/finchagentic/mcp/issues](https://github.com/finchagentic/mcp/issues)

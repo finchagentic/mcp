@@ -1,7 +1,7 @@
-# Contributing to @noelclaw/mcp
+# Contributing to @finchagentic/mcp
 
 Thanks for your interest in contributing! This guide covers the dev setup, code
-style, commit conventions, and PR checklist for the NoelClaw MCP server.
+style, commit conventions, and PR checklist for the Finch MCP server.
 
 This repository (`mcp-server/`) is a **separate git repo** from `app/`.
 Commit and open PRs against `mcp-server/` directly.
@@ -17,7 +17,7 @@ Commit and open PRs against `mcp-server/` directly.
 
 ```bash
 # clone
-git clone https://github.com/noelclaw/mcp.git
+git clone https://github.com/finchagentic/mcp.git
 cd mcp
 
 # use the right Node version
@@ -45,7 +45,7 @@ After `npm install`, the `prepare` script installs Husky git hooks. The
 ```
 src/
   index.ts          # entry point → dist/index.js
-  cli.ts            # noelclaw CLI → dist/cli.js
+  cli.ts            # finch CLI → dist/cli.js
   server.ts         # MCP server + tool registration
   config.ts         # env + config loading
   llm.ts            # LLM provider routing (Bankr → Anthropic)
@@ -102,7 +102,7 @@ Scope examples: `feat(memory): add memory_decay tool`,
 - TypeScript is the **primary correctness check** — run `npx tsc --noEmit`
   before pushing.
 - Where unit tests exist, run them with `npm test`.
-- For tool changes, do an end-to-end rescan (`noelclaw doctor` + invoking the
+- For tool changes, do an end-to-end rescan (`finch doctor` + invoking the
   affected tool) to confirm zero errors, matching the project's "0 errors across
   rescans" guarantee.
 - If you add a new tool, document it in the README tool table and CHANGELOG.
@@ -134,4 +134,4 @@ Before opening a PR, confirm:
 ## Reporting security issues
 
 See [SECURITY.md](./SECURITY.md) — report vulnerabilities privately to
-security@noelclaw.com, **not** via public issues.
+security@finchagentic.com, **not** via public issues.

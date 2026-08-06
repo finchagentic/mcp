@@ -1,14 +1,31 @@
+import * as fs from "fs";
+import * as path from "path";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
 
 const GH_BASE = "https://api.github.com";
+
+// Was hardcoded "finch-mcp/3.28.0" - stale the moment package.json's version
+// moved on (already 4.4.0 locally as of this fix), unlike server.ts/cli.ts/
+// index.ts which all read it from package.json at runtime per this repo's
+// own stated policy (see CLAUDE.md's mcp-server note). __dirname here is
+// dist/tools/ once built, so two levels up reaches the package root - one
+// level deeper than server.ts's own copy of this pattern (dist/).
+const PKG_VERSION: string = (() => {
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, "..", "..", "package.json"), "utf8");
+    return (JSON.parse(raw) as { version?: string }).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
 
 function ghHeaders(): Record<string, string> {
   const token = process.env.GITHUB_TOKEN;
   const h: Record<string, string> = {
     Accept: "application/vnd.github.v3+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "noelclaw-mcp/3.28.0",
+    "User-Agent": `finch-mcp/${PKG_VERSION}`,
   };
   if (token) h.Authorization = `Bearer ${token}`;
   return h;
@@ -26,8 +43,123 @@ async function gh(path: string): Promise<any> {
   return res.json();
 }
 
-function md(text: string): ToolResult {
-  return { content: [{ type: "text" as const, text }] };
+function md(text: string, structuredContent?: Record<string, unknown>): ToolResult {
+  return structuredContent
+    ? { content: [{ type: "text" as const, text }], structuredContent }
+    : { content: [{ type: "text" as const, text }] };
+}
+
+// ── Structured output builders (MCP outputSchema payloads in output-schemas.ts) ──
+export function buildRepoList(username: string | undefined, repos: any[]): Record<string, unknown> {
+  return {
+    username: username ?? null,
+    count: repos.length,
+    repos: repos.map((r) => ({
+      fullName: r.full_name,
+      description: r.description ?? null,
+      language: r.language ?? null,
+      stars: r.stargazers_count ?? 0,
+      forks: r.forks_count ?? 0,
+      private: !!r.private,
+      updatedAt: r.updated_at ?? null,
+      url: r.html_url,
+    })),
+  };
+}
+
+export function buildPrList(owner: string, repo: string, state: string, prs: any[]): Record<string, unknown> {
+  return {
+    owner, repo, state,
+    count: prs.length,
+    prs: prs.map((p) => ({
+      number: p.number,
+      title: p.title,
+      author: p.user?.login ?? null,
+      draft: !!p.draft,
+      head: p.head?.ref ?? null,
+      base: p.base?.ref ?? null,
+      additions: p.additions ?? null,
+      deletions: p.deletions ?? null,
+      url: p.html_url,
+      updatedAt: p.updated_at ?? null,
+    })),
+  };
+}
+
+export function buildPrDetail(pr: any, files: any[], reviews: any[], comments: any[]): Record<string, unknown> {
+  return {
+    number: pr.number,
+    title: pr.title,
+    state: pr.state,
+    draft: !!pr.draft,
+    author: pr.user?.login ?? null,
+    head: pr.head?.ref ?? null,
+    base: pr.base?.ref ?? null,
+    additions: pr.additions ?? 0,
+    deletions: pr.deletions ?? 0,
+    changedFiles: pr.changed_files ?? 0,
+    url: pr.html_url,
+    files: (files ?? []).slice(0, 50).map((f) => ({
+      filename: f.filename, status: f.status, additions: f.additions, deletions: f.deletions,
+    })),
+    reviewCount: (reviews ?? []).length,
+    commentCount: (comments ?? []).length,
+  };
+}
+
+export function buildIssueList(owner: string, repo: string, state: string, issues: any[]): Record<string, unknown> {
+  return {
+    owner, repo, state,
+    count: issues.length,
+    issues: issues.map((i) => ({
+      number: i.number,
+      title: i.title,
+      author: i.user?.login ?? null,
+      labels: (i.labels ?? []).map((l: any) => l.name),
+      comments: i.comments ?? 0,
+      url: i.html_url,
+      updatedAt: i.updated_at ?? null,
+    })),
+  };
+}
+
+export function buildIssueDetail(issue: any, comments: any[]): Record<string, unknown> {
+  return {
+    number: issue.number,
+    title: issue.title,
+    state: issue.state,
+    author: issue.user?.login ?? null,
+    labels: (issue.labels ?? []).map((l: any) => l.name),
+    assignees: (issue.assignees ?? []).map((a: any) => a.login),
+    commentCount: (comments ?? []).length,
+    url: issue.html_url,
+    createdAt: issue.created_at ?? null,
+  };
+}
+
+export function buildCommitList(owner: string, repo: string, branch: string | undefined, path: string | undefined, commits: any[]): Record<string, unknown> {
+  return {
+    owner, repo,
+    branch: branch ?? null,
+    path: path ?? null,
+    count: commits.length,
+    commits: commits.map((c) => ({
+      sha: c.sha,
+      message: c.commit?.message?.split("\n")[0] ?? null,
+      author: c.commit?.author?.name ?? c.author?.login ?? null,
+      date: c.commit?.author?.date ?? null,
+      url: c.html_url,
+    })),
+  };
+}
+
+export function buildCodeSearch(query: string, totalCount: number, items: any[]): Record<string, unknown> {
+  return {
+    query,
+    totalCount: totalCount ?? items.length,
+    count: items.length,
+    results: items.map((it) => ({ path: it.path, repo: it.repository?.full_name ?? null, url: it.html_url })),
+  };
 }
 
 function fmtDate(iso: string | undefined): string {
@@ -182,14 +314,14 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
         const desc = r.description ? `\n   ${r.description.slice(0, 100)}` : "";
         return `${vis} **[${r.full_name}](${r.html_url})** ⭐${r.stargazers_count} 🍴${r.forks_count}${lang} · ${fmtDate(r.updated_at)}${desc}`;
       });
-      return md([header, ...rows].join("\n"));
+      return md([header, ...rows].join("\n"), buildRepoList(a.username, repos));
     }
 
     case "github_list_prs": {
       const { owner, repo, state = "open" } = a;
       const per_page = Math.min(a.per_page ?? 15, 100);
       const prs: any[] = await gh(`/repos/${owner}/${repo}/pulls?state=${state}&per_page=${per_page}`);
-      if (!prs.length) return md(`No ${state} PRs in **${owner}/${repo}**.`);
+      if (!prs.length) return md(`No ${state} PRs in **${owner}/${repo}**.`, buildPrList(owner, repo, state, []));
       const header = `## PRs — ${owner}/${repo} (${state}, ${prs.length})\n`;
       const rows = prs.map(p => {
         const draft = p.draft ? " `draft`" : "";
@@ -199,7 +331,7 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
         const body = p.body ? `\n   ${p.body.slice(0, 120).replace(/\n/g, " ")}…` : "";
         return `**#${p.number}** [${p.title}](${p.html_url})${draft}\n   @${p.user?.login} · \`${p.head?.ref}\` → \`${p.base?.ref}\`${changes} · ${fmtDate(p.updated_at)}${body}`;
       });
-      return md([header, ...rows].join("\n\n"));
+      return md([header, ...rows].join("\n\n"), buildPrList(owner, repo, state, prs));
     }
 
     case "github_get_pr": {
@@ -241,7 +373,7 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
           lines.push(`**@${c.user?.login}** · ${fmtDate(c.created_at)}\n> ${c.body?.slice(0, 400)}`);
         }
       }
-      return md(lines.join("\n"));
+      return md(lines.join("\n"), buildPrDetail(pr, files, reviews, comments));
     }
 
     case "github_list_issues": {
@@ -251,7 +383,7 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
       if (labels) issuePath += `&labels=${encodeURIComponent(labels)}`;
       const all: any[] = await gh(issuePath);
       const issues = all.filter((i: any) => !i.pull_request);
-      if (!issues.length) return md(`No ${state} issues in **${owner}/${repo}**${labels ? ` with labels: ${labels}` : ""}.`);
+      if (!issues.length) return md(`No ${state} issues in **${owner}/${repo}**${labels ? ` with labels: ${labels}` : ""}.`, buildIssueList(owner, repo, state, []));
       const header = `## Issues — ${owner}/${repo} (${state}, ${issues.length})\n`;
       const rows = issues.map((i: any) => {
         const lbls = i.labels?.length ? ` · ${i.labels.map((l: any) => `\`${l.name}\``).join(" ")}` : "";
@@ -259,7 +391,7 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
         const body = i.body ? `\n   ${i.body.slice(0, 100).replace(/\n/g, " ")}…` : "";
         return `**#${i.number}** [${i.title}](${i.html_url})\n   @${i.user?.login}${lbls}${cmts} · ${fmtDate(i.updated_at)}${body}`;
       });
-      return md([header, ...rows].join("\n\n"));
+      return md([header, ...rows].join("\n\n"), buildIssueList(owner, repo, state, issues));
     }
 
     case "github_get_issue": {
@@ -285,7 +417,7 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
           lines.push("");
         }
       }
-      return md(lines.join("\n"));
+      return md(lines.join("\n"), buildIssueDetail(issue, comments));
     }
 
     case "github_get_file": {
@@ -294,7 +426,10 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
       if (ref) fileUrl += `?ref=${encodeURIComponent(ref)}`;
       const data: any = await gh(fileUrl);
       if (data.type !== "file") {
-        return md(`Not a file — got type \`${data.type}\`. Specify a full file path, not a directory.`);
+        return md(
+          `Not a file — got type \`${data.type}\`. Specify a full file path, not a directory.`,
+          { owner, repo, path: filePath, isFile: false },
+        );
       }
       const content = Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf-8");
       const truncated = content.length > 10000;
@@ -308,7 +443,11 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
         "```",
       ];
       if (truncated) lines.push(`\n_File truncated at 10,000 chars (${(content.length / 1024).toFixed(1)}KB total)._`);
-      return md(lines.join("\n"));
+      return md(lines.join("\n"), {
+        owner, repo, path: data.path, ref: ref ?? null, isFile: true,
+        sizeBytes: data.size ?? null, sha: data.sha ?? null, url: data.html_url ?? null,
+        language: lang, truncated, content: content.slice(0, 10000),
+      });
     }
 
     case "github_get_commits": {
@@ -318,7 +457,7 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
       if (branch) commitUrl += `&sha=${encodeURIComponent(branch)}`;
       if (filePath) commitUrl += `&path=${encodeURIComponent(filePath)}`;
       const commits: any[] = await gh(commitUrl);
-      if (!commits.length) return md(`No commits found in **${owner}/${repo}**${branch ? ` @ ${branch}` : ""}${filePath ? ` for \`${filePath}\`` : ""}.`);
+      if (!commits.length) return md(`No commits found in **${owner}/${repo}**${branch ? ` @ ${branch}` : ""}${filePath ? ` for \`${filePath}\`` : ""}.`, buildCommitList(owner, repo, branch, filePath, []));
       const filter = filePath ? ` · \`${filePath}\`` : "";
       const header = `## Commits — ${owner}/${repo}${branch ? ` @ ${branch}` : ""}${filter} (${commits.length})\n`;
       const rows = commits.map(c => {
@@ -327,7 +466,7 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
         const sha = c.sha?.slice(0, 7);
         return `\`${sha}\` **${msg}**\n   @${author} · ${fmtDate(c.commit?.author?.date)} · [↗](${c.html_url})`;
       });
-      return md([header, ...rows].join("\n\n"));
+      return md([header, ...rows].join("\n\n"), buildCommitList(owner, repo, branch, filePath, commits));
     }
 
     case "github_search_code": {
@@ -354,9 +493,9 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
               `   \`\`\`json`,
               `   {`,
               `     "mcpServers": {`,
-              `       "noelclaw": {`,
+              `       "finch": {`,
               `         "command": "npx",`,
-              `         "args": ["-y", "@noelclaw/mcp"],`,
+              `         "args": ["-y", "@finchagentic/mcp"],`,
               `         "env": { "GITHUB_TOKEN": "ghp_..." }`,
               `       }`,
               `     }`,
@@ -380,7 +519,7 @@ export async function handleGithubTool(name: string, args: unknown): Promise<Too
         const rows = items.map((item: any) =>
           `**[\`${item.path}\`](${item.html_url})** · ${item.repository?.full_name}`
         );
-        return md([header, ...rows].join("\n"));
+        return md([header, ...rows].join("\n"), buildCodeSearch(query, data.total_count, items));
       } catch (e: any) {
         return {
           content: [{

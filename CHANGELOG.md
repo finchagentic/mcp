@@ -18,6 +18,52 @@ All notable changes to **@finchagentic/mcp** are documented in this file.
 
 ## [Unreleased]
 
+## [4.4.1] — 2026-08-07
+
+### Fixed
+- **`create_automation` had no confirmation step before arming fund-moving automations.** A swap/send automation runs unattended and repeatedly (the backend's 1-minute cron fires it going forward, not just once), but the tool created it immediately from a single call with no preview. Now requires two calls: the first (no `confirm`) returns a dry-run preview of the parsed trigger/action with nothing created; only a second call with `confirm: true` actually creates it. Backend gained a matching `dryRun` mode on `/automations/create` so the preview reflects genuine parsing/validation, not a guess. Reclassified from `WRITE` to `DESTRUCTIVE` in tool annotations to match.
+- **`miroshark_*` and `finch_shell_chat` read auth only from `process.env.FINCH_SESSION_TOKEN`/`FINCH_API_KEY` directly**, bypassing the saved-config fallback (`~/.finch/config.json`, written by `finch login`) every other tool gets via `callConvex()`. A user authenticated interactively rather than via env var got a silent, unauthenticated request from exactly these two tools while everything else worked. Both now go through `getSavedToken()`.
+- **RH RPC URL echoed in full into `rh_mcp_balance`/`rh_mcp_status` output.** `ROBINHOOD_RPC_URL`/`RH_RPC_URL` are documented overrides (e.g. for ISP DNS blocks) and could be pointed at a keyed provider (Alchemy/Infura-style URL with an embedded API key) - the full URL landing in a tool response would put that key in chat transcripts/client logs. Now only the host is shown.
+- Stale hardcoded `"finch-mcp/3.28.0"` User-Agent in `github.ts` - now reads the real version from `package.json` at runtime like every other entry point already does.
+- CLI boot banner ASCII art was still spelling out the pre-rebrand "NOELCLAW" wordmark.
+
+### Changed
+- Bumped `@modelcontextprotocol/sdk` 1.29→1.30, `ethers` 6.16→6.17.
+- Removed unused `node-fetch` dependency (nothing in `src/` imports it - all HTTP calls use global `fetch`).
+- `npm audit`: 8 advisories (transitive, all in the MCP SDK's unused HTTP-transport path) → 0.
+
+## [4.4.0] — 2026-08-03
+
+### Added
+- **`workspaceProject` on `vault_save` and `agent_spawn`.** MCP tools can now file content into the same named Projects a user organizes their Agents/vault into on the webapp's Agents page — pass a name and it's matched case-insensitively (falling back to a slug match) or created automatically server-side, no separate "create project" call needed. Named `workspaceProject` rather than `project` deliberately - `code_session_save` already uses `project` for its vault-key slug (`code/<project>`), an unrelated concept; reusing the name would have meant the same word doing two different things depending which tool read it.
+- **`list_projects`** — read-only companion, lists a user's projects so a caller can reuse an existing one instead of relying purely on the automatic name match.
+- Both are hosted-vault only: local-vault mode has no project concept at all, so `workspaceProject` is a silent no-op there rather than a confusing network-style error.
+
+## [4.3.0] — 2026-08-02
+
+### Added
+- **`claim_vested_rewards`** — closes a gap where the stake-lifecycle notification told users to "run claimVestedRewards" after rewards vested, but no MCP tool by that name existed. Requires `confirm: true`, same as every other fund-moving stake tool.
+- **`code_session_save`** — persists a coding/debugging session as a versioned Markdown snapshot in vault (`vault_save type=code`, key `code/<project>`), auto-linked to related past code and research entries. Mirrors what `deep_research` already does automatically for research (auto-save + auto-link) so coding sessions get the same continuity: the next session — yours or another agent's — starts with real context instead of cold.
+- **`agent_recall` now pulls related context automatically.** In addition to the agent's own logged updates and learnings, recall does a best-effort hybrid memory search on the agent's goal and surfaces matching memory/vault entries (including `code_session_save` and `deep_research` output) — so an agent's context isn't limited to only what `agent_update` explicitly logged.
+- **`code` added as a vault entry type** (`research | execution | workflow | prompt | file | memory | code`), used by `code_session_save` and available to `vault_save` directly.
+
+### Fixed
+- **Doubled "Invalid input: Invalid input: …" validation errors, across 16 files / 49 call sites.** The Zod version in use already prefixes its own `invalid_type` messages with "Invalid input: " - every tool's own `` `Invalid input: ${issue.message}` `` wrapper duplicated it. `audit_contract` had a worse variant of the same root cause: it interpolated the whole `ZodError.message` (a JSON-stringified issue array) into the error text instead of a single issue's `.message`, so a validation failure surfaced a raw JSON blob instead of a sentence. Both fixed by dropping the redundant wrapper and reading `issues[0].message` directly - other issue types (too_small, invalid_string, enum, etc.) were never affected, since only `invalid_type`'s message happened to already carry the "Invalid input:" prefix.
+
+## [4.2.0] — 2026-08-01
+
+### Removed
+- **9 tools that always 404'd, deleted rather than left dangling.** `agent_identity`, `agent_schedule`, `agent_unschedule`, `agent_pause`, `agent_resume`, `agent_runs`, `list_playbooks`, `run_playbook`, `get_finch_ledger` all called backend routes that were never implemented — not a regression, they never worked. The autonomous agent-scheduling and Noel Framework playbook/Sentinel subsystems these depended on have no backing data model at all (no schema tables, no cron). Re-added only once that backend exists for real.
+- **`memory_publish`**, for the same reason one level deeper: even a correctly-wired publish call would have done nothing observable — nothing anywhere reads the `published` flag for cross-user discovery, and no "Memory Marketplace" page or browse route exists. The tool asked for an "IRREVERSIBLE, PUBLIC" confirmation for a marketplace that isn't built. `vault_unpublish` is left in place (harmless, correct, just currently unreachable without a publish path).
+
+### Added
+- **`stake_auto_restake`** — opt in per stake to have it renew itself automatically at the same tier every time it unlocks. No FINCH ever leaves the treasury (the principal is already there for the stake's whole life, so renewal is a pure state update) and no gas is spent doing it. Does not auto-compound rewards — that would require signing from your own custodial wallet unattended, which this deliberately does not do.
+- **`lockTier` parameter on `stake_finch`** — choose 7/30/90-day lock periods (1.0x/1.5x/2.0x reward multiplier) instead of always defaulting to 7 days. `stake_finch_status` now shows your wallet's available-to-stake balance (previously only showed already-staked totals, so there was no way to tell from the tool output whether a requested stake amount was even affordable) and each stake's tier.
+
+### Fixed
+- **OpenAI-compatible custom endpoints (`OPENAI_BASE_URL`) could return an empty string with no error.** `callOpenAI()` only read `data.choices[0].message.content`; at least one real gateway wraps its response in `{ data: { choices: [...] }, success: true }` for some models while returning the standard top-level shape for others on the same endpoint/key. A model-dependent response shape meant `ask_finch`/`deep_research`/scheduled-agent learning could silently produce nothing instead of failing loudly. Now falls back to the wrapped shape and throws a clear error if neither is present.
+- **Local wallet default encryption was weaker than it looked.** Without `FINCH_WALLET_PASSPHRASE` set, the key protecting `~/.finch/wallet.json` derived only from `hostname()+platform()+arch()` — all guessable/public, so the wallet file alone (e.g. leaked via backup sync or malware) was enough to derive the key offline. Now folds in a random secret generated once via `crypto.randomBytes` and stored alongside the wallet (`~/.finch/.local-secret`), so the wallet file alone is no longer sufficient. Existing wallets migrate in place on first successful decrypt under the old scheme.
+
 ## [4.1.0] — 2026-07-29
 
 ### Fixed

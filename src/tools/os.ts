@@ -4,6 +4,7 @@ import { ToolResult } from "../types.js";
 import { getTier } from "../token-gate.js";
 import { getOrCreateWallet } from "../wallet.js";
 import { getLocalMemoryConfig, isLocalMemoryReachable, localMemoryProfile } from "../local-memory.js";
+import { getSavedToken } from "../config.js";
 
 const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
 
@@ -221,13 +222,18 @@ export async function handleOsTool(name: string, args: unknown): Promise<ToolRes
       const { message, agent_id } = args as { message: string; agent_id?: string };
       if (!message) return { content: [{ type: "text", text: "Error: message is required" }] };
       try {
-        const res = await fetch(`${CONVEX_SITE}/noel/shell/chat`, {
+        // Bug fix: this used to read only process.env.FINCH_SESSION_TOKEN/
+        // FINCH_API_KEY directly, bypassing getSavedToken()'s fallback to
+        // ~/.finch/config.json - a user authenticated via `finch login`
+        // (not an env var) silently sent an empty Authorization header here
+        // while every other tool (which goes through callConvex) worked.
+        const res = await fetch(`${CONVEX_SITE}/finch/shell/chat`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.FINCH_SESSION_TOKEN ?? process.env.FINCH_API_KEY ?? ""}`,
+            "Authorization": `Bearer ${getSavedToken() ?? process.env.FINCH_API_KEY ?? ""}`,
           },
-          body: JSON.stringify({ message, agentId: agent_id ?? "noel-default" }),
+          body: JSON.stringify({ message, agentId: agent_id ?? "finch-default" }),
           signal: AbortSignal.timeout(60_000),
         });
         if (!res.ok) {

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
-import { callLLM, isGrokActive, type LiveSearchOptions, type LiveSearchSource } from "../llm.js";
+import { callLLM, isGrokActive, hasDirectLLMKey, grokLiveSearchHits, type LiveSearchOptions, type LiveSearchSource } from "../llm.js";
 import { callConvex } from "../convex.js";
 import { checkSignal } from "../signal-gate.js";
 import { enrichQuery, todayContext } from "../enrichment-router.js";
@@ -42,16 +42,34 @@ export const DEEP_RESEARCH_TOOLS: Tool[] = [
   {
     name: "deep_research",
     description:
-      "Multi-agent research: decomposes the topic into specialist angles, runs each as its own search-and-synth lane, then a synthesizer consolidates everything into one structured report with inline [N] citations. " +
-      "Depths: fast (~45s) · standard (~90s) · deep (~180s, adds adversarial critic). " +
-      "Profile-aware, auto-saves to vault, auto-links to related past reports. " +
-      "When Grok is active, Live Search pulls real-time X/news/web.",
+      "Web research engine: searches, scrapes, ranks and de-duplicates sources, then returns them " +
+      "as a numbered, citable evidence pack for YOU to synthesise. This is the default (mode='sources') " +
+      "and needs no API key. " +
+      "You are the analyst: pass your own sub-queries via `queries` for full control over the angles " +
+      "covered — otherwise they are derived from the topic. " +
+      "Set mode='report' only if you want the server to write the prose itself (requires an LLM key, " +
+      "and you cannot steer the result). " +
+      "Profile-aware, auto-saves to vault, auto-links to related past reports.",
     inputSchema: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description: "Research question. Be specific: 'state of Base chain TVL Q2 2026' beats 'Base chain'.",
+        },
+        queries: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "YOUR sub-queries to search (recommended). You know the topic and the user's intent, so plan " +
+            "the angles yourself — 3-6 specific queries beat a generic decomposition. Omit to derive them.",
+        },
+        mode: {
+          type: "string",
+          enum: ["sources", "report"],
+          description:
+            "'sources' (default) returns the ranked evidence pack for you to synthesise — no API key needed. " +
+            "'report' makes the server write the prose (needs an LLM key; you cannot steer it).",
         },
         depth: {
           type: "string",
@@ -96,6 +114,8 @@ export const DEEP_RESEARCH_TOOLS: Tool[] = [
 
 const InputSchema = z.object({
   query: z.string().min(3).max(500),
+  queries: z.array(z.string().min(3).max(300)).max(12).optional(),
+  mode: z.enum(["sources", "report"]).optional(),
   depth: z.enum(["fast", "standard", "deep"]).optional(),
   focus: z.string().max(80).optional(),
   continueFrom: z.string().max(200).optional(),
@@ -131,13 +151,13 @@ interface Source {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function safeParseJson<T>(raw: string, fallback: T): T {
-  try { return JSON.parse(raw) as T; } catch {}
+  try { return JSON.parse(raw) as T; } catch { /* try the next parse strategy */ }
   const stripped = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-  try { return JSON.parse(stripped) as T; } catch {}
+  try { return JSON.parse(stripped) as T; } catch { /* try the next parse strategy */ }
   const arrMatch = stripped.match(/\[[\s\S]*\]/);
-  if (arrMatch) { try { return JSON.parse(arrMatch[0]) as T; } catch {} }
+  if (arrMatch) { try { return JSON.parse(arrMatch[0]) as T; } catch { /* try the next parse strategy */ } }
   const objMatch = stripped.match(/\{[\s\S]*\}/);
-  if (objMatch) { try { return JSON.parse(objMatch[0]) as T; } catch {} }
+  if (objMatch) { try { return JSON.parse(objMatch[0]) as T; } catch { /* try the next parse strategy */ } }
   return fallback;
 }
 
@@ -218,6 +238,26 @@ function currentYearMonth(): string {
 
 // ─── Firecrawl ────────────────────────────────────────────────────────────────
 
+type SearchHit = { url: string; title: string; description?: string };
+
+/**
+ * Firecrawl returns either a flat array or a keyed object of result groups
+ * (`{ web: [...], news: [...] }`). The proxy path assumed the flat shape and
+ * handed an object to `.forEach`, which threw — invisible until now because
+ * without an API key the run always died at the planner first.
+ */
+function normalizeSearchHits(raw: unknown): SearchHit[] {
+  if (Array.isArray(raw)) return raw as SearchHit[];
+  if (raw && typeof raw === "object") {
+    const out: SearchHit[] = [];
+    for (const group of Object.values(raw as Record<string, unknown>)) {
+      if (Array.isArray(group)) out.push(...(group as SearchHit[]));
+    }
+    return out;
+  }
+  return [];
+}
+
 async function fcSearch(query: string, limit: number): Promise<Array<{ url: string; title: string; description?: string }>> {
   // BYOK path - direct call to Firecrawl with user's key. Fastest, no proxy hop.
   const key = process.env.FIRECRAWL_API_KEY;
@@ -230,22 +270,22 @@ async function fcSearch(query: string, limit: number): Promise<Array<{ url: stri
         signal: AbortSignal.timeout(15_000),
       });
       if (res.ok) {
-        const data = (await res.json()) as { data?: Array<{ url: string; title: string; description?: string }> };
-        return data.data ?? [];
+        const data = (await res.json()) as { data?: unknown };
+        return normalizeSearchHits(data.data);
       }
     } catch { /* fall through */ }
   }
 
-  // Backend-proxy path - session-authed; Noelclaw covers Firecrawl cost.
+  // Backend-proxy path - session-authed; Finch covers Firecrawl cost.
   try {
     const data = await callConvex(
       "/research/firecrawl-search",
       "POST",
       { query, limit },
-      "deep_research_search_proxy",
+      "web_search",
       20_000,
-    ) as { results?: Array<{ url: string; title: string; description?: string }> } | null;
-    return data?.results ?? [];
+    ) as { results?: unknown } | null;
+    return normalizeSearchHits(data?.results);
   } catch {
     return [];
   }
@@ -281,7 +321,7 @@ async function fcScrape(url: string): Promise<{ markdown: string; publishedAt?: 
       "/research/firecrawl-scrape",
       "POST",
       { url },
-      "deep_research_scrape_proxy",
+      "web_scrape",
       25_000,
     ) as { markdown?: string } | null;
     if (data?.markdown) return { markdown: data.markdown };
@@ -290,6 +330,33 @@ async function fcScrape(url: string): Promise<{ markdown: string; publishedAt?: 
 }
 
 // ─── LLM stages ───────────────────────────────────────────────────────────────
+
+/**
+ * Sub-queries without an LLM.
+ *
+ * The caller should normally pass `queries` — it is a model and plans better
+ * than any heuristic. This exists so the evidence-pack path still works with
+ * zero configuration, rather than failing when no API key is set.
+ */
+function deriveSubQueries(
+  query: string,
+  n: number,
+  focus?: string,
+  freshMode?: { days: number }
+): string[] {
+  const base = query.trim().replace(/\?+$/, "");
+  const recency = freshMode ? ` ${new Date().getFullYear()} latest` : "";
+  const lenses = focus
+    ? [focus, `${focus} risks`, `${focus} data`]
+    : ["overview", "latest developments", "risks and criticism", "data and numbers", "expert analysis"];
+
+  const out = [`${base}${recency}`];
+  for (const lens of lenses) {
+    if (out.length >= Math.max(2, n)) break;
+    out.push(`${base} ${lens}${recency}`);
+  }
+  return out;
+}
 
 async function planQueries(query: string, n: number, focus?: string, priorContext?: string, freshMode?: { days: number }): Promise<string[]> {
   const focusNote = focus ? ` Focus angle: ${focus}.` : "";
@@ -565,7 +632,7 @@ async function synthesize(
   let memoryContext = "";
   if (isFinal) {
     const [profileData, memHits] = await Promise.allSettled([
-      callConvex("/vault/profile-context?maxChars=1200", "GET", undefined, "profile_context"),
+      callConvex("/vault/profile-context?maxChars=1200", "GET", undefined, "vault_read"),
       searchSupermemory(query, 4),
     ]);
     if (profileData.status === "fulfilled") {
@@ -749,13 +816,18 @@ Write the ${isFinal ? "final" : "draft"} report now. Markdown only - no preamble
       : ""
   }`;
 
-  // Research synthesis uses NOELCLAW_RESEARCH_MODEL when set. Default is
+  // Research synthesis uses FINCH_RESEARCH_MODEL when set. Default is
   // `grok-4.3` - when Bankr is the active gateway this routes to Grok 4.3
   // through Bankr (Grok handles fresh data better; Claude is the safer
   // pick for reasoning, JSON, code). Override via env or pass the same
-  // model string to NOELCLAW_MODEL to bypass.
-  const researchModel = process.env.NOELCLAW_RESEARCH_MODEL ?? "grok-4.3";
-  const raw = await callLLM(sys, user, isFinal ? 4000 : 2000, [], 90_000, { liveSearch, model: researchModel });
+  // model string to FINCH_MODEL to bypass.
+  const researchModel = process.env.FINCH_RESEARCH_MODEL ?? "grok-4.3";
+  // Deep mode (critic notes present, or the 5-angle planner ran) produces a
+  // longer report than the standard 6-section template - a fixed 4000-token
+  // budget was cutting deep reports off mid-sentence around risk #6-7 of 13+.
+  const isDeepMode = !!criticNotes || (angles?.length ?? 0) >= 5;
+  const finalTokens = isDeepMode ? 7000 : 4000;
+  const raw = await callLLM(sys, user, isFinal ? finalTokens : 2000, [], 90_000, { liveSearch, model: researchModel });
   const { content: report, liveCitations } = extractLiveCitations(raw);
 
   // Citation density check - only for final reports. If the report has many
@@ -769,7 +841,7 @@ Write the ${isFinal ? "final" : "draft"} report now. Markdown only - no preamble
 
 ⚠️ Your previous draft had ${density.numericalClaims} numerical claims but only ${density.citations} [N] citations. That ratio is too low. Rewrite with stricter citation density: every percentage, dollar amount, count, date, and named entity must carry [N]. Use the At a Glance table to anchor the key metrics.`;
     try {
-      const rawRetry = await callLLM(sys, retryUser, 4000, [], 90_000, { liveSearch, model: researchModel });
+      const rawRetry = await callLLM(sys, retryUser, finalTokens, [], 90_000, { liveSearch, model: researchModel });
       const { content: retryReport, liveCitations: retryCitations } = extractLiveCitations(rawRetry);
       return { report: retryReport, liveCitations: retryCitations.length > 0 ? retryCitations : liveCitations };
     } catch {
@@ -936,10 +1008,14 @@ export async function handleDeepResearch(
 
   const parsed = InputSchema.safeParse(args);
   if (!parsed.success) {
-    return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
   }
 
   const { query, focus, continueFrom } = parsed.data;
+  const clientQueries = parsed.data.queries ?? [];
+  // Default to the evidence pack: it always works (no key) and lets the caller
+  // do the synthesis it is better at. 'report' is the opt-in legacy path.
+  const sourcesMode = (parsed.data.mode ?? "sources") === "sources";
   const depth = parsed.data.depth ?? "standard";
   const saveToVault = parsed.data.saveToVault ?? true;
 
@@ -966,7 +1042,7 @@ export async function handleDeepResearch(
     : undefined;
 
   // No early FIRECRAWL_API_KEY gate - fcSearch/fcScrape transparently fall
-  // through to the Noelclaw backend proxy when the user is signed in but
+  // through to the Finch backend proxy when the user is signed in but
   // has no local key. If both paths fail, the search loop returns an empty
   // source list and the synthesis stage produces the "insufficient signal"
   // skip report instead of a fake summary.
@@ -1035,7 +1111,20 @@ export async function handleDeepResearch(
   // the angle structure for synthesis & critic prompts.
   let angles: ResearchAngle[] = [];
   let subQs: string[];
-  if (useAngles) {
+  if (clientQueries.length > 0) {
+    // The client is itself a strong model and knows the user's intent — when it
+    // supplies the angles we skip the planner entirely. No LLM call, no key,
+    // and the user can actually steer what gets researched.
+    subQs = clientQueries;
+    log(`🧭 Using ${subQs.length} caller-supplied queries (no planner call).`);
+  } else if (!hasDirectLLMKey() && !sourcesMode) {
+    subQs = deriveSubQueries(query, subN, focus, freshConfig);
+    log(`🧭 Derived ${subQs.length} sub-queries without a planner (no LLM key).`);
+  } else if (sourcesMode) {
+    // Evidence-pack mode must never require a key. Derive locally.
+    subQs = deriveSubQueries(query, subN, focus, freshConfig);
+    log(`🧭 Derived ${subQs.length} sub-queries. Pass \`queries\` to control the angles yourself.`);
+  } else if (useAngles) {
     log(`🧭 Planning ${angleN} specialist angles${priorContext ? " (continuation mode)" : ""}${freshMode ? " (fresh mode)" : ""}...`);
     angles = await planAngles(query, angleN, focus, priorContext?.content, freshConfig);
     if (angles.length === 0) {
@@ -1079,12 +1168,23 @@ export async function handleDeepResearch(
 
   // ── Stage 3: parallel scrape ──
   log(`📥 Scraping ${ranked.length} sources in parallel...`);
+  // Track why sources drop out. Silently returning fewer sources makes a thin
+  // report look like a complete one — the user can't tell a well-supported
+  // finding from one built on two pages that happened to load.
+  let unreachable = 0;
+  let tooThin = 0;
   const scraped = await Promise.all(
     ranked.map(async (c) => {
       const r = await fcScrape(c.url);
-      if (!r) return null;
+      if (!r) {
+        unreachable++;
+        return null;
+      }
       const excerpt = pickBestExcerpt(r.markdown, queryTerms);
-      if (excerpt.length < 150) return null;
+      if (excerpt.length < 150) {
+        tooThin++;
+        return null;
+      }
       return {
         url: c.url,
         domain: domainOf(c.url),
@@ -1101,8 +1201,100 @@ export async function handleDeepResearch(
     .slice(0, maxSources)
     .map((s, i) => ({ n: i + 1, ...s, class: classifySource(s.score) }));
 
+  const dropped = unreachable + tooThin;
+  if (dropped > 0) {
+    const parts: string[] = [];
+    if (unreachable) parts.push(`${unreachable} unreachable/blocked`);
+    if (tooThin) parts.push(`${tooThin} too thin to quote`);
+    log(
+      `⚠️  ${dropped} of ${ranked.length} sources dropped (${parts.join(", ")}) — ` +
+        `report is based on ${sources.length}.`
+    );
+  }
+
   if (sources.length === 0) {
     return { content: [{ type: "text", text: `Could not scrape any usable sources for: "${query}". Sites may be blocking or paywalled.` }], isError: true };
+  }
+
+  // ── Evidence-pack mode: hand the sources back and stop ──
+  // Everything below this point is the server writing prose. The caller is a
+  // model with the user's full context; it synthesises better, it can be
+  // steered mid-conversation, and it needs no API key to do it.
+  if (sourcesMode) {
+    // X / news via Grok Live Search — the one input the caller's model cannot
+    // fetch for itself. Retrieved verbatim and appended as ordinary numbered
+    // sources so the caller can weigh them (and discount anonymous accounts)
+    // rather than receiving a pre-filtered opinion. Skipped silently with no key.
+    let liveHits: Array<{ url: string; excerpt: string }> = [];
+    const liveSources: LiveSearchSource[] = liveSearch?.sources ?? ["x", "news", "web"];
+    if (liveSearch) {
+      log(`📡 Grok Live Search (${liveSources.join(", ")}) for real-time X/news...`);
+      liveHits = await grokLiveSearchHits(
+        query,
+        liveSources,
+        parsed.data.liveSearchDays,
+        depth === "fast" ? 6 : 10
+      );
+      log(liveHits.length ? `📡 ${liveHits.length} live item(s) retrieved.` : `📡 Live Search returned nothing usable.`);
+    }
+
+    log(`📦 Returning ${sources.length + liveHits.length} sources as an evidence pack.`);
+    const pack: string[] = [
+      `# Research evidence — "${query}"`,
+      ``,
+      `**${sources.length} sources** · queries run: ${subQs.length}${dropped > 0 ? ` · ${dropped} dropped` : ""}`,
+      `_Synthesis is yours: cite with [N], and say if the evidence is thin or one-sided._`,
+      ``,
+      `**Queries searched:**`,
+      ...subQs.map((q) => `- ${q}`),
+      ``,
+      `---`,
+      ``,
+    ];
+    for (const s of sources) {
+      pack.push(
+        `### [${s.n}] ${s.title}`,
+        `${s.url}`,
+        `_${s.domain}${s.publishedAt ? ` · ${String(s.publishedAt).slice(0, 10)}` : ""} · ${s.class}_`,
+        ``,
+        s.excerpt,
+        ``
+      );
+    }
+
+    if (liveHits.length) {
+      pack.push(
+        `---`,
+        ``,
+        `## Real-time (${liveSources.join(" / ")}) — retrieved verbatim`,
+        `_Unvetted social/news chatter. Weigh it yourself: check who is speaking, whether the claim is`,
+        `corroborated by a numbered source above, and discount anonymous or promotional accounts._`,
+        ``
+      );
+      liveHits.forEach((h, idx) => {
+        pack.push(
+          `### [L${idx + 1}] ${h.url || "(no url)"}`,
+          ``,
+          h.excerpt || "_(no excerpt returned)_`",
+          ``
+        );
+      });
+    }
+
+    pack.push(`---`, ``);
+    // Announce the capability rather than silently omitting it — a missing key
+    // should look like an unconfigured option, not like the feature never existed.
+    if (!liveSearch) {
+      pack.push(
+        `ℹ️ **No real-time X / news in this pack.** Web sources only. Set \`GROK_API_KEY\` to add ` +
+          `live X and news items — it is optional, and everything above works without it.`,
+        ``
+      );
+    }
+    pack.push(
+      `_Pass \`queries\` next time to control the angles. Use \`mode: "report"\` only if you want the server to write the prose (needs an LLM key)._`
+    );
+    return { content: [{ type: "text", text: pack.join("\n") }] };
   }
 
   // ── Stage 4: draft synthesis (only if reflection enabled) ──
@@ -1299,7 +1491,7 @@ export async function handleDeepResearch(
   }
 
   // ── Stage 8: vault auto-linking - connect this report to related research ──
-  // This is what makes Noelclaw deep_research compound over time. Every new
+  // This is what makes Finch deep_research compound over time. Every new
   // report finds related past reports in your vault and creates typed links,
   // so your knowledge base grows into a connected graph (vault_related to
   // explore it). Best-effort - failure here never blocks the report.
@@ -1355,7 +1547,7 @@ export async function handleDeepResearch(
 
   const header = [
     `🔬 **Deep Research v3** - depth: ${depth} · ${subQs.length} planned + ${useReflection ? "reflection" : "no reflection"} · ${sources.length} scraped sources${liveCitations.length > 0 ? ` · ${liveCitations.length} live` : ""}${liveSearch ? ` · 🛰 Live Search [${liveSearch.sources.join(",")}]` : ""}${freshMode ? ` · ⏱ fresh:${freshDays}d` : ""}`,
-    vaultKey ? `📁 Saved to vault: \`${vaultKey}\`` : (saveToVault ? `⚠️ Vault save skipped (not authenticated - sign in with \`noelclaw login\`)` : ""),
+    vaultKey ? `📁 Saved to vault: \`${vaultKey}\`` : (saveToVault ? `⚠️ Vault save skipped (not authenticated - sign in with \`finch login\`)` : ""),
     continuationSection,
     linkedSection,
     ``,

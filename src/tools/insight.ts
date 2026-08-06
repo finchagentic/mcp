@@ -500,7 +500,7 @@ export async function handleInsightTool(name: string, args: unknown): Promise<To
 
   if (name === "market_thesis") {
     const parsed = MarketThesisSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
     const { token, context } = parsed.data;
     const priceData = await fetchVerifiedPrice(token);
@@ -573,7 +573,7 @@ export async function handleInsightTool(name: string, args: unknown): Promise<To
 
   if (name === "trade_plan") {
     const parsed = TradePlanSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
     const { token, side = "long", portfolioSize, riskTolerance = "moderate", timeframe } = parsed.data;
     const priceData = await fetchVerifiedPrice(token);

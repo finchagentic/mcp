@@ -1,19 +1,19 @@
-import { callConvex, callConvexRaw } from "./convex.js";
+import { callConvex } from "./convex.js";
 
-// MCP Resources surface for noelclaw.
+// MCP Resources surface for finch.
 //
 // Exposes the user's vault entries as MCP Resources so the LLM can pull
 // them directly via the standard Resource read flow - no Tool call, no
 // per-read schema overhead. URI shape:
 //
-//   noelclaw://vault/<entry-key>
+//   finch://vault/<entry-key>
 //
 // Pagination via MCP cursors lets clients walk past the first page when a
 // user has thousands of entries - earlier versions silently truncated at 50.
 // MIME type is derived from the entry's contentType (json/code/markdown/text).
 
 const PAGE_SIZE = 50;
-const URI_PREFIX = "noelclaw://vault/";
+const URI_PREFIX = "finch://vault/";
 
 type VaultListEntry = {
   key: string;
@@ -74,7 +74,7 @@ export async function listVaultResources(cursor?: string): Promise<{
       `/vault/list?limit=${PAGE_SIZE + 1}&offset=${offset}`,
       "GET",
       undefined,
-      "list_resources",
+      "vault_list",
     ) as { entries?: VaultListEntry[]; results?: VaultListEntry[] };
 
     const allEntries = data.entries ?? data.results ?? [];
@@ -113,7 +113,7 @@ export async function readVaultResource(uri: string): Promise<{
     `/vault/entry?key=${encodeURIComponent(key)}`,
     "GET",
     undefined,
-    "read_resource",
+    "vault_read",
   ) as {
     title?: string;
     type?: string;
@@ -128,19 +128,12 @@ export async function readVaultResource(uri: string): Promise<{
     throw new Error(`Vault entry not found: ${key}`);
   }
 
-  // Blob-backed entry - preview lives in `content`, real payload streams
-  // from /vault/blob. Same flow vault_read uses internally.
-  let body = data.content ?? "";
-  if (data.contentFileId) {
-    try {
-      body = await callConvexRaw(
-        `/vault/blob?id=${encodeURIComponent(data.contentFileId)}`,
-        "read_resource",
-      );
-    } catch (err: any) {
-      body = (data.content ?? "") + `\n\n_(could not load full blob: ${err.message})_`;
-    }
-  }
+  // No blob-storage tier exists on the backend (see app/convex/vault.ts) -
+  // oversized content is rejected at save time, so `contentFileId` never
+  // comes back here. A `/vault/blob` fallback used to live here but the route
+  // was never registered in http.ts either; removed as dead code rather than
+  // fixed against a storage tier that doesn't exist.
+  const body = data.content ?? "";
 
   const mime = mimeForContentType(data.contentType);
   // Only prepend a friendly header for markdown (the default) - JSON/code

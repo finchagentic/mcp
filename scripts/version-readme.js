@@ -11,8 +11,8 @@ const version = pkg.version;
 const readmePath = path.join(__dirname, "../README.md");
 let readme = fs.readFileSync(readmePath, "utf8");
 
-// Replace all pinned version refs: @noelclaw/mcp@X.Y.Z
-const updated = readme.replace(/@noelclaw\/mcp@\d+\.\d+\.\d+/g, `@noelclaw/mcp@${version}`);
+// Replace all pinned version refs: @finchagentic/mcp@X.Y.Z
+const updated = readme.replace(/@finchagentic\/mcp@\d+\.\d+\.\d+/g, `@finchagentic/mcp@${version}`);
 
 fs.writeFileSync(readmePath, updated, "utf8");
-console.log(`✔ README.md version pins updated to @noelclaw/mcp@${version}`);
+console.log(`✔ README.md version pins updated to @finchagentic/mcp@${version}`);

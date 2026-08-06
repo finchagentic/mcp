@@ -545,16 +545,6 @@ export const OUTPUT_SCHEMAS: Record<string, JSONSchema> = {
     },
     required: ["name", "count", "versions"],
   },
-  agent_runs: {
-    type: "object",
-    properties: {
-      name: { type: "string" },
-      count: { type: "number" },
-      runs: { type: "array", items: { type: "object", additionalProperties: true } },
-    },
-    required: ["name", "count", "runs"],
-  },
-
   // ── scanner / orders / wallet ────────────────────────────────────────────────
   scan_market: {
     type: "object",

@@ -301,8 +301,21 @@ async function callOpenAI(
     throw new Error(`OpenAI error ${res.status}: ${body.slice(0, 200)}`);
   }
 
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content ?? "";
+  const data = await res.json() as {
+    choices?: Array<{ message?: { content?: string } }>;
+    data?: { choices?: Array<{ message?: { content?: string } }> };
+  };
+  // Most OpenAI-compatible gateways put `choices` at the top level, but
+  // OPENAI_BASE_URL can point at anything that speaks this API shape - at
+  // least one (9Router) wraps the whole payload in `{ data: {...}, success:
+  // true }` for some models (confirmed live: routers9/glm5.2 returns this
+  // wrapper while routers9/tencent/hy3 on the SAME endpoint/key returns
+  // top-level choices). Without this fallback the call silently returns ""
+  // instead of throwing - worse than an error, since every caller of
+  // callLLM() just gets an empty synthesis with no indication anything failed.
+  const content = data.choices?.[0]?.message?.content ?? data.data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error(`OpenAI-compatible endpoint returned no content (model: ${model})`);
+  return content;
 }
 
 async function callGrok(

@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { ethers } from "ethers";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { callConvex } from "../convex.js";
 import { callLLM } from "../llm.js";
 import { ToolResult } from "../types.js";
 import { getLocalVaultConfig, localVaultSave, localVaultRead, localVaultHistory } from "../local-vault.js";
+import { hybridMemorySearch } from "./memory.js";
+import { resolveProjectId } from "../project.js";
 
 // ─── Agent Learning Memory (v3.25) ──────────────────────────────────────────
 // After every agent_update, an LLM reviews the new progress in context of the
@@ -116,6 +117,17 @@ function withAgentLock<T>(agentName: string, fn: () => Promise<T>): Promise<T> {
 // exist there, no matching http.route(...) call. Every call to either tool
 // always 404'd. Re-add them (and the matching handler blocks below) only
 // alongside building those two routes for real.
+//
+// Same story, same fix, applied again here: agent_identity, agent_schedule,
+// agent_unschedule, agent_pause, agent_resume and agent_runs called
+// /agents/identity, /agents/schedule, /agents/unschedule, /agents/pause and
+// /agents/runs - none of which exist in http.ts, and none of which have any
+// backing data model in schema.ts (no agent-identity table, no scheduler,
+// no run-history table; there isn't even a cron for it in crons.ts). This
+// isn't a missing route, it's an unbuilt subsystem, so the tools were
+// removed rather than stubbed. Re-add only alongside building that
+// autonomous-scheduling backend for real: identity/schedule storage, a cron
+// that actually wakes agents up, and run-history writes.
 export const AGENT_TOOLS: Tool[] = [
   {
     name: "agent_spawn",
@@ -131,6 +143,13 @@ export const AGENT_TOOLS: Tool[] = [
         name:    { type: "string", description: "Unique agent name (e.g. 'market-researcher', 'onboarding-helper')" },
         goal:    { type: "string", description: "What this agent is trying to accomplish" },
         context: { type: "string", description: "Optional starting context, data, or notes for the agent" },
+        workspaceProject: {
+          type: "string",
+          description:
+            "Optional: file this agent into a named Finch workspace project (visible on the Agents page's " +
+            "project switcher). Matched case-insensitively by name; created automatically if it doesn't exist " +
+            "yet. Hosted vault only (no effect in local-vault mode).",
+        },
       },
       required: ["name", "goal"],
     },
@@ -139,6 +158,8 @@ export const AGENT_TOOLS: Tool[] = [
     name: "agent_recall",
     description:
       "Recall a persistent agent by name - loads its goal, current progress, findings, full history, and accumulated learnings (patterns the agent extracted from past runs). " +
+      "Also pulls related context from memory/vault (code_session_save entries, deep_research reports, notes) matching the agent's goal, " +
+      "so recall reflects everything relevant to the goal - not just what agent_update explicitly logged. " +
       "Use this to resume a long-running task, check what an agent last did, or hand context to a fresh LLM session. " +
       "Learnings compound over time - the more an agent runs, the smarter recall becomes.",
     inputSchema: {
@@ -168,28 +189,6 @@ export const AGENT_TOOLS: Tool[] = [
     },
   },
   {
-    name: "agent_identity",
-    description:
-      "Get or create a persistent on-chain identity (wallet address) for a named agent. " +
-      "Every agent gets a unique Base address that acts as its digital identity - visible in the app, " +
-      "usable for receiving payments, and permanently tied to that agent name. " +
-      "Call once per agent; calling again returns the same address.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        agentId: {
-          type: "string",
-          description: "Agent ID or name (e.g. 'market-researcher', 'analyst')",
-        },
-        agentName: {
-          type: "string",
-          description: "Human-readable agent name for display (optional)",
-        },
-      },
-      required: ["agentId"],
-    },
-  },
-  {
     name: "agent_ledger",
     description:
       "View the full activity ledger for a persistent agent - every update, status change, and finding logged in order. " +
@@ -210,80 +209,13 @@ export const AGENT_TOOLS: Tool[] = [
       required: ["name"],
     },
   },
-  {
-    name: "agent_schedule",
-    description:
-      "Attach an autonomous schedule to an existing agent. The agent wakes up on cron cadence, executes a workflow, " +
-      "saves the result to vault under `agent/<name>/runs/<date>`. " +
-      "Workflows: " +
-      "deep_research (LLM brief on agent's goal) · " +
-      "packet (run a named packet) · " +
-      "llm (agentic loop with restricted tools) · " +
-      "reflection (walk recent vault activity → update profile/state for persistent context). " +
-      "Cron shorthand: hourly | daily | weekly | every-2-minutes | every-5-minutes (last two for testing).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Agent name (must already exist via agent_spawn)" },
-        cron: { type: "string", description: "Schedule: hourly | daily | weekly | every-2-minutes | every-5-minutes" },
-        workflow: { type: "string", enum: ["deep_research", "packet", "llm", "reflection"], description: "Workflow type" },
-        topic: { type: "string", description: "[deep_research] Research topic (defaults to agent's goal)" },
-        packetName: { type: "string", description: "[packet] Name of packet to run (must exist via packet_create)" },
-        prompt: { type: "string", description: "[llm] Instructions for the autonomous agent loop" },
-        allowedTools: { type: "array", items: { type: "string" }, description: "[llm] Tool whitelist - subset of: vault_save, vault_search, get_market_data, web_search" },
-        windowDays: { type: "number", description: "[reflection] Days of vault activity to walk (default 7)" },
-        maxRunsPerDay: { type: "number", description: "Cost ceiling - default 4 (daily), 24 (hourly), 1 (weekly)" },
-      },
-      required: ["name", "cron", "workflow"],
-    },
-  },
-  {
-    name: "agent_unschedule",
-    description: "Remove the autonomous schedule from an agent. The agent itself remains in vault - only its scheduled execution is cleared.",
-    inputSchema: {
-      type: "object",
-      properties: { name: { type: "string", description: "Agent name" } },
-      required: ["name"],
-    },
-  },
-  {
-    name: "agent_pause",
-    description: "Pause an agent's autonomous schedule without deleting it. Use agent_resume to re-enable.",
-    inputSchema: {
-      type: "object",
-      properties: { name: { type: "string", description: "Agent name" } },
-      required: ["name"],
-    },
-  },
-  {
-    name: "agent_resume",
-    description: "Re-enable a paused agent's schedule. Resets the consecutive-failure counter.",
-    inputSchema: {
-      type: "object",
-      properties: { name: { type: "string", description: "Agent name" } },
-      required: ["name"],
-    },
-  },
-  {
-    name: "agent_runs",
-    description:
-      "View recent autonomous run history for a scheduled agent - when it ran, success/failure status, " +
-      "vault key where the output was saved, and duration. Use this to verify the autonomous loop is healthy.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Agent name" },
-        limit: { type: "number", description: "Max runs to return (default 10, max 50)" },
-      },
-      required: ["name"],
-    },
-  },
 ];
 
 const SpawnAgentSchema = z.object({
   name:    z.string().min(1).max(60).regex(/^[a-z0-9-]+$/, "name must be lowercase alphanumeric with hyphens"),
   goal:    z.string().min(1),
   context: z.string().optional(),
+  workspaceProject: z.string().optional(),
 });
 const RecallAgentSchema = z.object({ name: z.string().min(1) });
 const UpdateAgentSchema = z.object({
@@ -307,28 +239,11 @@ export function buildAgentLedger(name: string, versions: any[]): Record<string, 
   };
 }
 
-export function buildAgentRuns(name: string, runs: any[]): Record<string, unknown> {
-  return {
-    name,
-    count: runs.length,
-    runs: runs.map((r) => ({
-      startedAt: r.startedAt ?? null,
-      endedAt: r.endedAt ?? null,
-      status: r.status ?? null,
-      workflow: r.workflow ?? null,
-      durationMs: r.durationMs ?? null,
-      toolCallCount: r.toolCallCount ?? null,
-      resultSummary: r.resultSummary ?? null,
-      errorMsg: r.errorMsg ?? null,
-    })),
-  };
-}
-
 export async function handleAgentTool(name: string, args: unknown): Promise<ToolResult | null> {
   if (name === "agent_spawn") {
     const parsed = SpawnAgentSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
-    const { name: agentName, goal, context } = parsed.data;
+    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const { name: agentName, goal, context, workspaceProject } = parsed.data;
 
     const content = JSON.stringify({
       goal,
@@ -338,7 +253,7 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
       updates: [],
     }, null, 2);
 
-    const savePayload = {
+    const savePayload: Record<string, unknown> = {
       type:    "memory",
       key:     `agent/${agentName}`,
       title:   `Agent: ${agentName}`,
@@ -349,19 +264,32 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
       commitMsg: "spawned",
     };
     const localVault = getLocalVaultConfig();
+
+    // Resolve the project name -> id server-side (auto-creates on first use).
+    // No-op in local-vault mode - there is no project concept there.
+    let resolvedProjectName: string | null = null;
+    if (workspaceProject && !localVault) {
+      const resolved = await resolveProjectId(workspaceProject);
+      if (resolved) {
+        savePayload.projectId = resolved.projectId;
+        resolvedProjectName = resolved.name;
+      }
+    }
+
     const data = localVault
-      ? localVaultSave(localVault, savePayload)
+      ? localVaultSave(localVault, savePayload as any)
       : await callConvex("/vault/save", "POST", savePayload, "vault_save") as { key?: string; version?: number; error?: string };
 
     if ((data as any).error) return { content: [{ type: "text", text: `Error: ${(data as any).error}` }], isError: true };
+    const projectLine = resolvedProjectName ? `\n**Project:** ${resolvedProjectName}` : "";
     return {
-      content: [{ type: "text", text: `🤖 Agent **${agentName}** spawned${localVault ? " locally" : ""}.\n\n**Goal:** ${goal}\n\nRecall with \`agent_recall\` · Update progress with \`agent_update\`` }],
+      content: [{ type: "text", text: `🤖 Agent **${agentName}** spawned${localVault ? " locally" : ""}.\n\n**Goal:** ${goal}${projectLine}\n\nRecall with \`agent_recall\` · Update progress with \`agent_update\`` }],
     };
   }
 
   if (name === "agent_recall") {
     const parsed = RecallAgentSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
     const localVault = getLocalVaultConfig();
     let data: { key?: string; content?: string; version?: number; updatedAt?: number; error?: string };
@@ -407,12 +335,30 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
     if (updates.length) lines.push(`\n**Recent updates:**\n${updates.join("\n")}`);
     if (state.nextStep) lines.push(`\n**Next step:** ${state.nextStep}`);
 
+    // Related context - best-effort pull of relevant memory/vault knowledge
+    // (code_session_save entries, deep_research reports, manual notes) so the
+    // agent isn't blind to work done on its goal outside its own update log.
+    // This is what makes recall "continuously have context" rather than only
+    // ever knowing what agent_update explicitly logged.
+    if (state.goal) {
+      try {
+        const related = await hybridMemorySearch(state.goal, 4);
+        if (related.length) {
+          lines.push(`\n**📎 Related context (${related.length}):**`);
+          related.forEach((r) => {
+            const title = r.metadata?.title ?? r.content.slice(0, 70).replace(/\n/g, " ");
+            lines.push(`  • ${title}`);
+          });
+        }
+      } catch { /* best-effort - recall must never fail because of this */ }
+    }
+
     return { content: [{ type: "text", text: lines.join("\n") }] };
   }
 
   if (name === "agent_update") {
     const parsed = UpdateAgentSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
     const { name: agentName, progress, findings, status = "active", nextStep } = parsed.data;
 
     return withAgentLock(agentName, async () => {
@@ -524,164 +470,6 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
       }],
       structuredContent: buildAgentLedger(agentName, versions),
     };
-  }
-
-  if (name === "agent_identity") {
-    const { agentId, agentName } = args as { agentId: string; agentName?: string };
-
-    // Check if identity already exists
-    const existing = await callConvex(
-      `/agents/identity?agentId=${encodeURIComponent(agentId)}`,
-      "GET", undefined, "agent_identity",
-    );
-
-    if (existing?.identity) {
-      const id = existing.identity;
-      return {
-        content: [{
-          type: "text",
-          text: [
-            `🤖 **Agent Identity: \`${agentId}\`**`,
-            ``,
-            `**Address:** \`${id.walletAddress}\``,
-            `**Network:** Base mainnet`,
-            ``,
-            `This address is permanent and tied to this agent.`,
-            `Share it to receive funds · Track spending · Verify agent actions`,
-          ].join("\n"),
-        }],
-      };
-    }
-
-    // Generate new wallet address for the agent
-    const wallet = ethers.Wallet.createRandom();
-    await callConvex("/agents/identity", "POST", {
-      agentId,
-      walletAddress: wallet.address,
-      agentName: agentName ?? agentId,
-    }, "agent_identity");
-
-    return {
-      content: [{
-        type: "text",
-        text: [
-          `🤖 **Agent Identity Created: \`${agentId}\`**`,
-          ``,
-          `**Address:** \`${wallet.address}\``,
-          `**Network:** Base mainnet`,
-          ``,
-          `This identity is now permanently linked to \`${agentId}\`.`,
-          `Visible in the Agents page of your Finch app.`,
-        ].join("\n"),
-      }],
-    };
-  }
-
-  // ─── Autonomous schedule tools ──────────────────────────────────────────────
-
-  if (name === "agent_schedule") {
-    const a = args as {
-      name: string; cron: string; workflow: "deep_research" | "packet" | "llm" | "reflection";
-      topic?: string; packetName?: string; prompt?: string; allowedTools?: string[];
-      windowDays?: number;
-      maxRunsPerDay?: number;
-    };
-    if (!a.name || !a.cron || !a.workflow) {
-      return { content: [{ type: "text", text: "name, cron, workflow required" }], isError: true };
-    }
-    const agentKey = `agent/${a.name}`;
-    const workflowConfig: any = {};
-    if (a.workflow === "deep_research" && a.topic) workflowConfig.topic = a.topic;
-    if (a.workflow === "packet") workflowConfig.packetName = a.packetName;
-    if (a.workflow === "llm") {
-      workflowConfig.prompt = a.prompt;
-      workflowConfig.allowedTools = a.allowedTools ?? ["vault_save", "vault_search"];
-    }
-    if (a.workflow === "reflection") {
-      workflowConfig.windowDays = typeof a.windowDays === "number" ? a.windowDays : 7;
-    }
-    const result = await callConvex("/agents/schedule", "POST", {
-      agentKey, cron: a.cron, workflow: a.workflow, workflowConfig,
-      maxRunsPerDay: a.maxRunsPerDay,
-    }, "agent_schedule");
-    if (result.error) return { content: [{ type: "text", text: `Schedule failed: ${result.error}` }], isError: true };
-    return {
-      content: [{
-        type: "text",
-        text: [
-          `🤖 **Schedule attached to \`${a.name}\`**`,
-          ``,
-          `Workflow: ${a.workflow}${a.topic ? `\nTopic: ${a.topic}` : ""}${a.packetName ? `\nPacket: ${a.packetName}` : ""}`,
-          `Cron: ${a.cron}`,
-          `Next run: ${result.nextRunIso}`,
-          ``,
-          `The agent will run autonomously. Check progress with \`agent_runs name=${a.name}\`.`,
-        ].filter(Boolean).join("\n"),
-      }],
-    };
-  }
-
-  if (name === "agent_unschedule") {
-    const a = args as { name: string };
-    if (!a.name) return { content: [{ type: "text", text: "name required" }], isError: true };
-    const result = await callConvex("/agents/unschedule", "POST", { agentKey: `agent/${a.name}` }, "agent_unschedule");
-    if (result.error) return { content: [{ type: "text", text: `Unschedule failed: ${result.error}` }], isError: true };
-    return {
-      content: [{
-        type: "text",
-        text: result.deleted
-          ? `🗑️ Schedule removed from \`${a.name}\`. Agent itself remains in vault.`
-          : `\`${a.name}\` had no active schedule.`,
-      }],
-    };
-  }
-
-  if (name === "agent_pause" || name === "agent_resume") {
-    const a = args as { name: string };
-    if (!a.name) return { content: [{ type: "text", text: "name required" }], isError: true };
-    const enabled = name === "agent_resume";
-    const result = await callConvex("/agents/pause", "POST", { agentKey: `agent/${a.name}`, enabled }, name);
-    if (result.error) return { content: [{ type: "text", text: `${name} failed: ${result.error}` }], isError: true };
-    if (!result.changed) return { content: [{ type: "text", text: `\`${a.name}\` has no schedule to ${enabled ? "resume" : "pause"}.` }] };
-    return {
-      content: [{
-        type: "text",
-        text: enabled
-          ? `▶️ Resumed schedule for \`${a.name}\`. Failure counter reset.`
-          : `⏸️ Paused schedule for \`${a.name}\`. Use \`agent_resume name=${a.name}\` to re-enable.`,
-      }],
-    };
-  }
-
-  if (name === "agent_runs") {
-    const a = args as { name: string; limit?: number };
-    if (!a.name) return { content: [{ type: "text", text: "name required" }], isError: true };
-    const limit = Math.min(Math.max(a.limit ?? 10, 1), 50);
-    const result = await callConvex(
-      `/agents/runs?agentKey=${encodeURIComponent(`agent/${a.name}`)}&limit=${limit}`,
-      "GET", undefined, "agent_runs",
-    );
-    if (result.error) return { content: [{ type: "text", text: `agent_runs failed: ${result.error}` }], isError: true };
-    const runs = (result.runs ?? []) as Array<{
-      startedAt: number; endedAt?: number; status: string;
-      vaultKeyResult?: string; resultSummary?: string; errorMsg?: string;
-      durationMs?: number; toolCallCount?: number; workflow: string;
-    }>;
-    if (!runs.length) {
-      return { content: [{ type: "text", text: `No autonomous runs yet for \`${a.name}\`. The agent runs on its cron schedule - be patient.` }], structuredContent: buildAgentRuns(a.name, []) };
-    }
-    const lines = [`## Recent runs for \`${a.name}\` (${runs.length})`, ""];
-    for (const r of runs) {
-      const when = new Date(r.startedAt).toISOString().replace("T", " ").slice(0, 19);
-      const dur = r.durationMs ? `${Math.round(r.durationMs / 1000)}s` : "-";
-      const icon = r.status === "success" ? "✅" : r.status === "failed" ? "❌" : r.status === "timeout" ? "⏱️" : "⏳";
-      lines.push(`${icon} **${when}** · ${r.workflow} · ${dur}${r.toolCallCount != null ? ` · ${r.toolCallCount} tool calls` : ""}`);
-      if (r.vaultKeyResult) lines.push(`   → \`${r.vaultKeyResult}\``);
-      if (r.resultSummary) lines.push(`   ${r.resultSummary.slice(0, 200)}`);
-      if (r.errorMsg) lines.push(`   ⚠️ ${r.errorMsg.slice(0, 200)}`);
-      lines.push("");
-    }
-    return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: buildAgentRuns(a.name, runs) };
   }
 
   return null;

@@ -68,11 +68,10 @@ describe("tool annotations", () => {
       "rh_bracket_create",
       "rh_orders_tick",
       "run_automation",
-      "run_playbook",
       "packet_run",
       "vault_delete",
       "memory_delete",
-      "memory_publish",
+      "packet_share",
       "rh_order_cancel",
     ];
     for (const name of mustBeDestructive) {

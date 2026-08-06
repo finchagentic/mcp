@@ -1,6 +1,6 @@
 {
   "name": "@finchagentic/mcp",
-  "version": "4.1.0",
+  "version": "4.4.1",
   "description": "The runtime layer for Agentic AI. Persistent memory, autonomous agents, and workflows that survive every session.",
   "main": "dist/index.js",
   "bin": {
@@ -9,7 +9,7 @@
   },
   "preferGlobal": true,
   "scripts": {
-    "build": "tsc",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
@@ -50,9 +50,8 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "ethers": "^6.16.0",
-    "node-fetch": "^3.3.2",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ethers": "^6.17.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

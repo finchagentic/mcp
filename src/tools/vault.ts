@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { callConvex, callConvexRaw } from "../convex.js";
+import { callConvex } from "../convex.js";
 import { ToolResult } from "../types.js";
 import { syncToSupermemory, searchSupermemory } from "./memory.js";
 import {
@@ -11,17 +11,19 @@ import {
   localVaultStoreCredential, localVaultGetCredential,
 } from "../local-vault.js";
 import { getLocalMemoryConfig, localMemoryDeleteByVaultKey } from "../local-memory.js";
+import { resolveProjectId } from "../project.js";
 
-const VAULT_TYPES = ["research", "execution", "workflow", "prompt", "file", "memory", "credential"] as const;
+const VAULT_TYPES = ["research", "execution", "workflow", "prompt", "file", "memory", "code", "credential"] as const;
 
 export const VAULT_TOOLS: Tool[] = [
   {
     name: "vault_save",
     description:
       "Save or update a versioned artifact in Finch Vault. Same key = update (git-style: prior version snapshotted, patched to v+1). " +
-      "Types: research | execution | workflow | prompt | file | memory. " +
+      "Types: research | execution | workflow | prompt | file | memory | code. " +
       "Entries up to 10MB - content over 600KB auto-offloads to blob storage. " +
-      "For quick unstructured notes, use memory_add instead.",
+      "For quick unstructured notes, use memory_add instead. For coding sessions specifically, " +
+      "prefer code_session_save - same versioning, but a structured template and auto-linking built in.",
     inputSchema: {
       type: "object",
       properties: {
@@ -34,8 +36,37 @@ export const VAULT_TOOLS: Tool[] = [
         tags: { type: "array", items: { type: "string" }, description: "Tags for filtering and search" },
         commitMsg: { type: "string", description: "Commit message for this version, e.g. 'initial research', 'refined with on-chain data'" },
         metadata: { type: "string", description: "Optional JSON string for extra structured fields" },
+        workspaceProject: {
+          type: "string",
+          description:
+            "Optional: file this entry into a named Finch workspace project (the same Projects a user " +
+            "organizes their Agents/vault into on the Agents page). Matched case-insensitively by name; " +
+            "created automatically if it doesn't exist yet. Not the same thing as a `key` path segment - " +
+            "this tags the entry in Finch's own project system. Hosted vault only (no effect in local-vault mode).",
+        },
       },
       required: ["type", "content"],
+    },
+  },
+  {
+    name: "code_session_save",
+    description:
+      "Persist a coding/debugging session as a versioned Markdown snapshot in Finch Vault, keyed by " +
+      "project (`code/<project>`) - so the next session (yours, or another agent's) has real context " +
+      "instead of starting cold. Same project = new version, full history kept (git-style, like vault_save). " +
+      "Auto-links to related past code and research entries. " +
+      "Call this at the end of a substantive coding task - not for every single file read or trivial edit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project or repo slug, e.g. 'finch-webapp', 'mcp-server'. Becomes the vault key: code/<project>." },
+        summary: { type: "string", description: "What was done this session - the task, the approach, the outcome." },
+        filesChanged: { type: "array", items: { type: "string" }, description: "Files touched, e.g. ['app/convex/vault.ts', 'app/src/App.tsx']" },
+        decisions: { type: "string", description: "Notable decisions or tradeoffs made and why - the part a future session can't re-derive from a diff alone." },
+        nextSteps: { type: "string", description: "What's left, or what to pick up next session." },
+        tags: { type: "array", items: { type: "string" }, description: "Extra tags for search, e.g. ['bugfix', 'refactor']" },
+      },
+      required: ["project", "summary"],
     },
   },
   {
@@ -251,6 +282,15 @@ export const VAULT_TOOLS: Tool[] = [
       required: ["key"],
     },
   },
+  {
+    name: "list_projects",
+    description:
+      "List your Finch workspace projects - the same Projects used to organize Agents and vault content on the " +
+      "webapp Agents page. Read-only. Check this before passing `workspaceProject` to vault_save/agent_spawn if " +
+      "you want to reuse an existing project rather than relying on the automatic case-insensitive name match. " +
+      "No effect / nothing to list in local-vault mode.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
 ];
 
 // ─── Zod schemas ─────────────────────────────────────────────────────────────
@@ -265,6 +305,16 @@ const SaveSchema = z.object({
   tags: z.array(z.string()).optional(),
   commitMsg: z.string().optional(),
   metadata: z.string().optional(),
+  workspaceProject: z.string().optional(),
+});
+
+const CodeSessionSchema = z.object({
+  project: z.string().min(1).max(80),
+  summary: z.string().min(1),
+  filesChanged: z.array(z.string()).max(100).optional(),
+  decisions: z.string().optional(),
+  nextSteps: z.string().optional(),
+  tags: z.array(z.string()).optional(),
 });
 
 const ReadSchema = z.object({ key: z.string().min(1) });
@@ -350,7 +400,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
   switch (name) {
     case "vault_save": {
       const parsed = SaveSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       if (parsed.data.type === "credential") {
         // vault_save writes plaintext to disk/DB - "credential" is only a
         // valid FILTER value for vault_list/search/export (which correctly
@@ -369,7 +419,20 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
       // Auto-generate title from content if not provided
       const firstLine = parsed.data.content.split("\n")[0].replace(/^#+\s*/, "").slice(0, 80);
       const autoTitle = parsed.data.title ?? (firstLine || `${parsed.data.type} - ${new Date().toISOString().slice(0, 10)}`);
-      const savePayload = { ...parsed.data, title: autoTitle };
+      const { workspaceProject, ...rest } = parsed.data;
+      const savePayload = { ...rest, title: autoTitle };
+
+      // Resolve the project name -> id server-side (auto-creates on first use).
+      // Local vault has no project concept at all - workspaceProject is
+      // silently a no-op there rather than a confusing network error.
+      let resolvedProjectName: string | null = null;
+      if (workspaceProject && !localVault) {
+        const resolved = await resolveProjectId(workspaceProject);
+        if (resolved) {
+          (savePayload as any).projectId = resolved.projectId;
+          resolvedProjectName = resolved.name;
+        }
+      }
 
       const data = localVault
         ? localVaultSave(localVault, savePayload)
@@ -412,6 +475,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
         `Key: \`${key}\``,
         `Version: v${version}`,
         changed && version > 1 ? `Previous version auto-snapshotted.` : "",
+        resolvedProjectName ? `📁 Project: ${resolvedProjectName}` : "",
         mirrorToMemory ? `🧠 Synced to searchable memory` : (localVault ? `💾 Stored locally at ~/.finch/vault` : ""),
         ...linkSummary,
         ``,
@@ -420,9 +484,100 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
       return { content: [{ type: "text", text: lines.join("\n") }] };
     }
 
+    case "code_session_save": {
+      const parsed = CodeSessionSchema.safeParse(args);
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const { project, summary, filesChanged, decisions, nextSteps, tags } = parsed.data;
+
+      const projectSlug = project.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "session";
+      const key = `code/${projectSlug}`;
+
+      const content = [
+        `# Code session: ${project}`,
+        ``,
+        `_${new Date().toISOString()}_`,
+        ``,
+        `## Summary`,
+        summary,
+        filesChanged?.length ? `\n## Files changed\n${filesChanged.map((f) => `- \`${f}\``).join("\n")}` : "",
+        decisions ? `\n## Decisions\n${decisions}` : "",
+        nextSteps ? `\n## Next steps\n${nextSteps}` : "",
+      ].filter(Boolean).join("\n");
+
+      const savePayload = {
+        type: "code" as const,
+        key,
+        title: `Code: ${project}`,
+        content,
+        contentType: "markdown" as const,
+        agentId: "code-session",
+        tags: ["code-session", ...(tags ?? [])],
+        commitMsg: summary.slice(0, 80),
+      };
+
+      const data = localVault
+        ? localVaultSave(localVault, savePayload)
+        : await callConvex("/vault/save", "POST", savePayload, "vault_save");
+      if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+      const { version, changed } = data;
+
+      // Same mirror-to-memory rule as vault_save: skip only when local vault
+      // is on WITHOUT local memory, so query terms never phone home for a
+      // fully offline setup.
+      const mirrorToMemory = !localVault || !!getLocalMemoryConfig();
+      if (mirrorToMemory) {
+        syncToSupermemory(content, {
+          vaultKey: key, title: savePayload.title, type: "code",
+          tags: savePayload.tags, version, source: "code_session_save",
+        });
+      }
+
+      // Auto-link to related past code/research entries - same idea as
+      // deep_research's auto-linking, so a project's session history and any
+      // research that informed it stay connected instead of sitting as
+      // disconnected entries. Purely additive - never blocks the save.
+      const linked: string[] = [];
+      try {
+        const searchQuery = `${project} ${summary}`.slice(0, 200);
+        let hits: Array<{ key: string; title: string }> = [];
+        if (localVault) {
+          const searchResult = localVaultSearch(localVault, searchQuery, { limit: 6 });
+          hits = ((searchResult.results ?? []) as Array<{ key?: string; title?: string }>)
+            .filter((r): r is { key: string; title?: string } => !!r.key && r.key !== key)
+            .map((r) => ({ key: r.key, title: r.title ?? "(untitled)" }));
+        } else {
+          const searchResult = (await callConvex("/vault/search", "POST", { q: searchQuery, n: 8 }, "vault_search")) as
+            { results?: Array<{ metadata?: { title?: string; vaultKey?: string; key?: string } }> } | null;
+          hits = (searchResult?.results ?? [])
+            .map((r) => {
+              const hitKey = r.metadata?.vaultKey ?? r.metadata?.key ?? null;
+              return hitKey ? { key: hitKey, title: r.metadata?.title ?? "(untitled)" } : null;
+            })
+            .filter((h): h is { key: string; title: string } => !!h && h.key !== key);
+        }
+        for (const hit of hits.slice(0, 3)) {
+          try {
+            if (localVault) localVaultLink(localVault, key, hit.key, "related");
+            else await callConvex("/vault/link", "POST", { fromKey: key, toKey: hit.key, relation: "related" }, "vault_link");
+            linked.push(hit.key);
+          } catch { /* skip individual link failures */ }
+        }
+      } catch { /* auto-link is purely additive */ }
+
+      const lines = [
+        `📦 **Code session ${changed ? (version === 1 ? "saved" : "updated") : "unchanged"}** - \`${key}\` (v${version})`,
+        filesChanged?.length ? `Files: ${filesChanged.length}` : "",
+        linked.length ? `🔗 Linked to ${linked.length} related entr${linked.length === 1 ? "y" : "ies"}: ${linked.map((k) => `\`${k}\``).join(", ")}` : "",
+        mirrorToMemory ? `🧠 Synced to searchable memory` : "",
+        ``,
+        `Next session: \`vault_read key="${key}"\` for the latest state, or \`vault_history key="${key}"\` for the full timeline.`,
+      ].filter(Boolean);
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    }
+
     case "vault_read": {
       const parsed = ReadSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const vaultReadKey = parsed.data.key;
       let data: any;
       try {
@@ -460,21 +615,32 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
         return { content: [{ type: "text", text: `vault_read error: ${data.error}` }], isError: true };
       }
 
-      // Large entries are offloaded to Convex File Storage. The doc holds a
-      // preview only; pull the real content from /vault/blob.
-      let fullContent: string = data.content ?? "";
-      if (data.contentFileId) {
-        try {
-          fullContent = await callConvexRaw(`/vault/blob?id=${encodeURIComponent(data.contentFileId)}`, "vault_read");
-        } catch (err: any) {
-          fullContent = (data.content ?? "") + `\n\n_(could not load full blob: ${err.message})_`;
-        }
-      }
+      // NOTE: there is no blob-storage tier on the backend (see
+      // app/convex/vault.ts MAX_CONTENT_BYTES comment) - oversized content is
+      // rejected at save time, not offloaded to file storage, so `contentFileId`
+      // never comes back on a vault entry. A `/vault/blob` fallback used to live
+      // here but the route was never registered in http.ts either, so it was
+      // dead in both directions - removed rather than fixed against a storage
+      // tier that doesn't exist. Re-add only alongside building that tier.
+      const fullContent: string = data.content ?? "";
 
       const sizeLabel = data.originalSize ? formatBytes(data.originalSize) : formatBytes(data.size);
       const backlinksBlock = Array.isArray(data.backlinks) && data.backlinks.length > 0
         ? `\n🔙 Linked from (${data.backlinks.length}):\n${data.backlinks.map((b: any) => `  ← \`${b.key}\`${b.title ? ` - ${b.title}` : ""}`).join("\n")}`
         : "";
+
+      // A raw projectId means nothing to a reader - resolve it to a name.
+      // One extra call only when the entry is actually tagged; skipped
+      // entirely for the common case (unassigned) and in local-vault mode.
+      let projectLabel = "";
+      if (data.projectId && !localVault) {
+        try {
+          const projData = await callConvex("/projects/list", "GET", undefined, "list_projects") as
+            { projects?: Array<{ id: string; name: string }> } | null;
+          const match = projData?.projects?.find((p) => p.id === data.projectId);
+          if (match) projectLabel = `📁 Project: ${match.name}`;
+        } catch { /* best-effort - never block the read over this */ }
+      }
 
       const lines = [
         `📂 **${data.title}**`,
@@ -482,6 +648,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
         data.tags?.length ? `Tags: ${data.tags.join(", ")}` : "",
         data.isPinned ? "📌 Pinned" : "",
         data.agentId ? `Agent: ${data.agentId}` : "",
+        projectLabel,
         `Updated: ${formatDate(data.updatedAt)}`,
         data.linkedKeys?.length ? `\nLinks out:\n${data.linkedKeys.map((l: string) => `  → ${l}`).join("\n")}` : "",
         backlinksBlock,
@@ -495,7 +662,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_list": {
       const parsed = ListSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const params = new URLSearchParams();
       if (parsed.data.type) params.set("type", parsed.data.type);
       if (parsed.data.agentId) params.set("agentId", parsed.data.agentId);
@@ -526,7 +693,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_search": {
       const parsed = SearchSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       // Full-text search, proxied through Convex (searchSupermemory is a
       // legacy name - it calls Finch's own /memory/search endpoint, not a
@@ -644,7 +811,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_history": {
       const parsed = HistorySchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const histKey = parsed.data.key;
       let data: any;
       try {
@@ -686,7 +853,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_diff": {
       const parsed = DiffSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const { key, fromVersion, toVersion } = parsed.data;
       let data: any;
       try {
@@ -733,7 +900,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_export": {
       const parsed = ExportSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const params = parsed.data.type ? `?type=${parsed.data.type}` : "";
       const data = localVault
         ? localVaultExport(localVault, parsed.data.type)
@@ -754,7 +921,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_store_credential": {
       const parsed = StoreCredentialSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const data = localVault
         ? localVaultStoreCredential(localVault, parsed.data.name, parsed.data.value, parsed.data.description)
         : await callConvex("/vault/credential/store", "POST", parsed.data, "vault_store_credential");
@@ -764,7 +931,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_get_credential": {
       const parsed = GetCredentialSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const params = new URLSearchParams({ name: parsed.data.name });
       let data: any;
       try {
@@ -783,7 +950,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_pin": {
       const parsed = PinSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const { key, pinned = true } = parsed.data;
       const data = localVault
         ? localVaultPin(localVault, key, pinned)
@@ -794,7 +961,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_unpublish": {
       const parsed = UnpublishSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       // Publishing is a hosted/marketplace concept - a local vault is private
       // by construction, so there is nothing to retract.
       if (localVault) {
@@ -815,7 +982,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_delete": {
       const parsed = DeleteSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       if ((args as { confirm?: boolean })?.confirm !== true) {
         return {
           content: [{
@@ -851,7 +1018,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_tag": {
       const parsed = TagSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const { key, tags, replace = false } = parsed.data;
       const data = localVault
         ? localVaultTag(localVault, key, tags, replace)
@@ -862,7 +1029,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_link": {
       const parsed = LinkSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const { fromKey, toKey, relation } = parsed.data;
       const data = localVault
         ? localVaultLink(localVault, fromKey, toKey, relation)
@@ -874,7 +1041,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
 
     case "vault_related": {
       const parsed = RelatedSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
       const { key, relation } = parsed.data;
       const params = new URLSearchParams({ key });
       if (relation) params.set("relation", relation);
@@ -888,6 +1055,23 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
       if (!items.length) return { content: [{ type: "text", text: `No related entries found for \`${key}\`${relation ? ` (relation: ${relation})` : ""}.` }] };
       const lines = items.map(r => `- **${r.title}** (\`${r.key}\`) [${r.type}] - ${r.direction} \`${r.relation}\``);
       return { content: [{ type: "text", text: `## Related entries for \`${key}\` (${items.length})\n\n${lines.join("\n")}` }] };
+    }
+
+    case "list_projects": {
+      if (localVault) {
+        return { content: [{ type: "text", text: "Local vault mode has no project concept - `workspaceProject` has no effect, and there's nothing to list here." }] };
+      }
+      const data = await callConvex("/projects/list", "GET", undefined, "list_projects") as {
+        projects?: Array<{ id: string; name: string; slug: string; description: string | null; updatedAt: number }>;
+        error?: string;
+      };
+      if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
+      const projects = data.projects ?? [];
+      if (!projects.length) {
+        return { content: [{ type: "text", text: "No projects yet. Pass `workspaceProject: \"name\"` to `vault_save` or `agent_spawn` and one is created automatically." }] };
+      }
+      const lines = projects.map((p) => `- **${p.name}** (\`${p.slug}\`)${p.description ? ` - ${p.description}` : ""}`);
+      return { content: [{ type: "text", text: `📁 **Your projects** (${projects.length})\n\n${lines.join("\n")}` }] };
     }
 
     default:

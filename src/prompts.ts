@@ -1,4 +1,4 @@
-// MCP Prompts surface for noelclaw.
+// MCP Prompts surface for finch.
 //
 // Exposes a small curated set of high-leverage workflows as MCP Prompts so
 // they appear as slash commands / quick actions in clients that support it

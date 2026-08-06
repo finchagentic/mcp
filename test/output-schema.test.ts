@@ -19,7 +19,7 @@ import { buildAutomationList, buildAutomationRuns } from "../src/tools/automatio
 import { buildMonitorList } from "../src/tools/monitor.js";
 import { buildPacketList } from "../src/tools/packets.js";
 import { buildMemorySearch, buildMemoryContext, buildMemoryProfile, buildMemoryList } from "../src/tools/memory.js";
-import { buildAgentLedger, buildAgentRuns } from "../src/tools/agents.js";
+import { buildAgentLedger } from "../src/tools/agents.js";
 import { buildScanResults } from "../src/tools/scanner.js";
 import { buildOrdersList } from "../src/tools/rh-orders.js";
 
@@ -99,7 +99,6 @@ describe("outputSchema declarations", () => {
     "memory_profile",
     "memory_list",
     "agent_ledger",
-    "agent_runs",
     "scan_market",
     "rh_orders_list",
     "get_wallet_address",
@@ -446,9 +445,6 @@ describe("structuredContent conforms to outputSchema", () => {
   it("agents / scanner / orders builders conform", () => {
     const ledger = buildAgentLedger("Scout", [{ version: 2, commitMsg: "m", createdAt: 1 }]);
     expect(conforms(ledger, (toolByName("agent_ledger") as any).outputSchema)).toEqual([]);
-
-    const runs = buildAgentRuns("Scout", [{ startedAt: 1, status: "success", workflow: "w", durationMs: 1200, toolCallCount: 5 }]);
-    expect(conforms(runs, (toolByName("agent_runs") as any).outputSchema)).toEqual([]);
 
     const scan = buildScanResults("dips", 40, [{ symbol: "TKN", mint: "0x", score: 72, pattern: "REVERSAL", liquidity: 120000, priceChange1h: -8, buyPressure5m: 61, volume1h: 5000 }]);
     expect((scan.results as any[])[0].address).toBe("0x");

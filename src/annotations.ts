@@ -39,11 +39,8 @@ const READ_ONLY_LOCAL = new Set<string>([
 // Toggles and upserts: re-running with the same args lands in the same state.
 const WRITE_IDEMPOTENT = new Set<string>([
   "agent_update",
-  "agent_schedule",
-  "agent_pause",
-  "agent_resume",
-  "agent_unschedule",
   "pause_automation",
+  "stake_auto_restake",
   "vault_link",
   "vault_pin",
   "vault_tag",
@@ -55,7 +52,7 @@ const WRITE_IDEMPOTENT = new Set<string>([
 const WRITE = new Set<string>([
   "agent_spawn",
   "chronicle_add",
-  "create_automation",
+  "code_session_save",
   "memory_add",
   "memory_extract",
   "memory_consolidate",
@@ -79,8 +76,7 @@ const DESTRUCTIVE = new Set<string>([
   "rh_order_cancel",
   "vault_delete",
   // irreversible public exposure
-  "memory_publish", // "IRREVERSIBLE, PUBLIC" per its own description
-  "packet_share", // "copies already taken remain" per its own description - same risk class as memory_publish
+  "packet_share", // "copies already taken remain" per its own description
   // money movement (Base)
   // NOTE: base_mcp_lend deliberately excluded - per its own description it
   // "Returns deposit INSTRUCTIONS only... Does NOT broadcast" - it's a read,
@@ -96,15 +92,22 @@ const DESTRUCTIVE = new Set<string>([
   "rh_mcp_swap",
   "rh_dca_create", // arms recurring real buys
   "rh_bracket_create", // arms real TP/SL sells
+  // a swap/send automation arms unattended, REPEATING real fund movement
+  // (the backend's 1-minute cron evaluator fires it) - same risk class as
+  // rh_dca_create/rh_bracket_create above, not a plain additive write. An
+  // alert-only automation doesn't move funds, but the tool can't tell which
+  // kind it's about to create until AFTER the backend parses rawInput, so
+  // it's classified by its worst case, same reasoning as rh_orders_tick.
+  "create_automation",
   "rh_orders_tick", // preview by default, but can execute:true and move funds
   // executors that run other (possibly fund-moving) tools
   "run_automation",
-  "run_playbook",
   "packet_run",
   // money movement (FINCH staking, custodial wallet) - stake locks real value
   // for a fixed period; unstake moves it (plus rewards) back
   "stake_finch",
   "unstake_finch",
+  "claim_vested_rewards", // treasury -> custodial wallet USDG transfer
 ]);
 
 export function annotationsFor(name: string): Ann {

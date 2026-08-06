@@ -29,13 +29,13 @@ Always pin the version. Never use `@latest`.
 
 ```bash
 # One-command installer (detects common MCP clients)
-npx -y -p @finchagentic/mcp@4.1.0 finch install
+npx -y -p @finchagentic/mcp@4.4.0 finch install
 ```
 
 ### Claude Code
 
 ```bash
-claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.1.0 finch-mcp
+claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.4.0 finch-mcp
 ```
 
 ### Cursor / Windsurf / Claude Desktop
@@ -45,7 +45,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.1.0 finch-mcp
   "mcpServers": {
     "finch": {
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.1.0", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.4.0", "finch-mcp"]
     }
   }
 }
@@ -59,7 +59,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.1.0 finch-mcp
     "finch": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.1.0", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.4.0", "finch-mcp"]
     }
   }
 }
@@ -79,7 +79,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.1.0 finch-mcp
 
 </details>
 
-No LLM API key is required to start — 114 of 119 tools are plain reads/writes/on-chain calls that your MCP client's own model already drives; only 5 (`ask_finch`, `deep_research`, and scheduled agent learning) do their own multi-step reasoning server-side and need a key (see [Configuration](#configuration)). Tools load on first use.
+No LLM API key is required to start — 111 of 116 tools are plain reads/writes/on-chain calls that your MCP client's own model already drives; only 5 (`ask_finch`, `deep_research`, and scheduled agent learning) do their own multi-step reasoning server-side and need a key (see [Configuration](#configuration)). Tools load on first use.
 
 ## Quick start
 
@@ -93,20 +93,24 @@ Try in your MCP client:
 
 ```
 remember: I prefer conservative DeFi strategies, max 5% risk
-spawn an agent called research-bot to track AI agent news weekly
+spawn an agent called research-bot to track AI agent news, update it after each session
 save this thesis to vault
 ```
 
 ## What you get
 
-**119 tools** across four pillars:
+**116 tools** across four pillars:
 
 | Pillar | What it does |
 |--------|----------------|
 | **Memory** | Full-text searchable memory + versioned vault + chronicle |
-| **Agents** | Spawn, recall, update, schedule named agents |
-| **Workflows** | Automations, monitors, packets, deep research |
+| **Agents** | Spawn, recall, update named agents — `agent_recall` also pulls related memory/vault context matching the agent's goal, not just its own logged updates |
+| **Workflows** | Automations, monitors, packets, deep research (auto-saves reports + auto-links related past research) |
 | **Execution** | Base DeFi, Robinhood Chain, market data, web, GitHub |
+
+Coding and research sessions persist the same way: `deep_research` auto-saves its report to vault and links it to related past reports; `code_session_save` does the same for coding/debugging sessions (`vault_save type=code`, versioned per project, auto-linked). Both exist so the next session — yours or another agent's — starts with real context instead of cold.
+
+`vault_save` and `agent_spawn` also take an optional `workspaceProject` - the same named Projects a user organizes their Agents/vault content into on the webapp's Agents page. Pass a name and it's matched case-insensitively or created automatically (`list_projects` to browse what exists first). Hosted vault only - local-vault mode has no project concept.
 
 Default palette is `core` (lighter context). Full set:
 
@@ -119,7 +123,7 @@ Default palette is `core` (lighter context). Full set:
 Finch is the runtime. **Your LLM is the brain. Your data stays yours.**
 
 ```bash
-npx -y -p @finchagentic/mcp@4.1.0 finch setup
+npx -y -p @finchagentic/mcp@4.4.0 finch setup
 # enable local vault (and optional local memory)
 ```
 
@@ -146,12 +150,12 @@ Scheduled/cloud features still need an account. Core memory, vault, and public-d
 | `GITHUB_TOKEN` | For `github_search_code` |
 | `ALCHEMY_API_KEY` | Faster Base RPC (optional) |
 
-**Cost model:** almost everything is free to run — the other 116 tools are plain API/RPC calls, and your MCP client's own model (Claude, GPT, whatever's driving the chat) does all the tool-selection reasoning at no cost to Finch. The 5 exceptions above need their own key because their reasoning happens *inside* the tool call, invisible to your client, and can't be delegated to it. Set exactly one of the four env vars and every tool that needs it will use it automatically.
+**Cost model:** almost everything is free to run — the other 110 tools are plain API/RPC calls, and your MCP client's own model (Claude, GPT, whatever's driving the chat) does all the tool-selection reasoning at no cost to Finch. The 5 exceptions above need their own key because their reasoning happens *inside* the tool call, invisible to your client, and can't be delegated to it. Set exactly one of the four env vars and every tool that needs it will use it automatically.
 
 Guided setup:
 
 ```bash
-npx -y -p @finchagentic/mcp@4.1.0 finch setup
+npx -y -p @finchagentic/mcp@4.4.0 finch setup
 ```
 
 ## Security
@@ -160,12 +164,12 @@ npx -y -p @finchagentic/mcp@4.1.0 finch setup
 |:-:|----------|------|
 | 1 | Prompt injection | External content is data only — never instructions |
 | 2 | Mainnet confirm | Estimate → preview → confirm → execute |
-| 3 | Pinned install | Always `@finchagentic/mcp@4.1.0`, never `@latest` |
+| 3 | Pinned install | Always `@finchagentic/mcp@4.4.0`, never `@latest` |
 | 4 | Credential vault | Never paste secrets into prompts or third-party tools |
 | 5 | Data disclosure | Know what leaves the machine (LLM, Firecrawl, GitHub, chain RPCs) |
 | 6 | Server monitors | Scheduled jobs need explicit confirmation |
-| 7 | Agent schedules | `agent_schedule` confirms cost + side effects |
-| 8 | Identity custody | Do not send assets to agent identity addresses |
+| 7 | Fund-moving confirm | `stake_finch`/`unstake_finch`/`base_mcp_send`/`base_mcp_swap`/`rh_mcp_swap` all require `confirm: true` |
+| 8 | Local wallet encryption | Set `FINCH_WALLET_PASSPHRASE` for a portable, passphrase-derived key — without it, the key derives from a random per-install secret + machine info, so the wallet file alone (without that secret file) isn't enough to decrypt it |
 
 ## Troubleshooting
 

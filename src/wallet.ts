@@ -28,21 +28,55 @@ export const BASE_CHAIN_ID = 8453;
 
 const WALLET_DIR = path.join(os.homedir(), ".finch");
 const WALLET_FILE = path.join(WALLET_DIR, "wallet.json");
+// Per-install random secret folded into the no-passphrase key derivation
+// (see getMachineKey). Generated once via crypto.randomBytes and stored
+// 0600 next to the wallet - real entropy, unlike hostname/platform/arch
+// which are guessable/public and give an attacker who copies the wallet
+// file everything they need to also derive the key.
+const LOCAL_SECRET_FILE = path.join(WALLET_DIR, ".local-secret");
 let _cachedWallet: ethers.Wallet | ethers.HDNodeWallet | null = null;
 
 export function clearWalletCache(): void { _cachedWallet = null; }
+
+function getOrCreateLocalSecret(): string {
+  try {
+    const existing = fs.readFileSync(LOCAL_SECRET_FILE, "utf8").trim();
+    if (existing) return existing;
+  } catch { /* doesn't exist yet, or unreadable - (re)create below */ }
+  const secret = crypto.randomBytes(32).toString("hex");
+  if (!fs.existsSync(WALLET_DIR)) fs.mkdirSync(WALLET_DIR, { recursive: true });
+  fs.writeFileSync(LOCAL_SECRET_FILE, secret, { mode: 0o600 });
+  return secret;
+}
 
 export function getMachineKey(): string {
   // A passphrase is meant to make the wallet portable (move the encrypted
   // file + set the same passphrase elsewhere and it still decrypts) - so when
   // one is set, derive the key from ONLY the passphrase, no machine binding.
-  // Without a passphrase, fall back to machine info as convenience-only
-  // encryption (prevents casual reads, not security against an attacker who
-  // has both the file and the system info).
   const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
   if (passphrase) {
     return crypto.createHash("sha256").update(passphrase).digest("hex").slice(0, 32);
   }
+  // Without a passphrase, this is convenience-only encryption - it still
+  // can't stop an attacker who obtains BOTH files (the encrypted wallet and
+  // this local secret), the same as any locally-stored key material. What it
+  // does stop is the weaker, more common case this used to be vulnerable to:
+  // hostname/platform/arch alone are public/guessable, so a copy of just the
+  // wallet file (backup sync, stolen disk, malware scraping known paths) used
+  // to be enough to brute-force the key offline. Folding in a random,
+  // file-local secret means the wallet file alone is no longer sufficient.
+  return crypto
+    .createHash("sha256")
+    .update(getOrCreateLocalSecret() + os.hostname() + os.platform() + os.arch())
+    .digest("hex")
+    .slice(0, 32);
+}
+
+/** Pre-entropy-fix no-passphrase key: machine info only, no local secret.
+ *  Kept solely so wallets encrypted before this fix still open; migrated to
+ *  the new scheme in place on first successful decrypt, same pattern as
+ *  getLegacyMachineKey below. */
+function getLegacyMachineOnlyKey(): string {
   return crypto
     .createHash("sha256")
     .update(os.hostname() + os.platform() + os.arch())
@@ -79,10 +113,11 @@ export function warnIfNoPassphrase(): void {
   // stderr only - stdout is reserved for MCP JSON-RPC framing when running as a server.
   process.stderr.write(
     "\n⚠️  FINCH_WALLET_PASSPHRASE is not set. Your local wallet " +
-    `(${WALLET_FILE}, used on both Base and Robinhood Chain) is encrypted with a key derived only from this machine's ` +
-    "hostname/platform/arch - low entropy, and crackable by anyone who copies the " +
-    "file (backup sync, stolen disk, malware). Set FINCH_WALLET_PASSPHRASE to a " +
-    "strong secret for real protection. This wallet holds real funds.\n\n"
+    `(${WALLET_FILE}, used on both Base and Robinhood Chain) is encrypted with a key derived from a random ` +
+    `per-install secret (${LOCAL_SECRET_FILE}) plus this machine's hostname/platform/arch. That stops the wallet ` +
+    "file alone from being crackable, but anyone who copies BOTH files together (backup sync, stolen disk, " +
+    "malware) still gets the wallet. Set FINCH_WALLET_PASSPHRASE to a strong secret you keep out of that backup " +
+    "for real protection. This wallet holds real funds.\n\n"
   );
 }
 
@@ -145,6 +180,24 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
           /* migration is best-effort - the legacy key still works next run either way */
         }
         return legacyWallet;
+      }
+      // Third tier: no passphrase ever set, and this wallet predates the fix
+      // that folds a random local secret into the no-passphrase key (it was
+      // encrypted with hostname/platform/arch alone). Try that exact old
+      // derivation before giving up.
+      if (!process.env.FINCH_WALLET_PASSPHRASE) {
+        try {
+          const oldNoPassWallet = await ethers.Wallet.fromEncryptedJson(encrypted, getLegacyMachineOnlyKey());
+          _cachedWallet = oldNoPassWallet;
+          try {
+            const migrated = await oldNoPassWallet.encrypt(getMachineKey());
+            fs.writeFileSync(WALLET_FILE, migrated, { mode: 0o600 });
+            process.stderr.write(`\nMigrated ${WALLET_FILE} to the higher-entropy no-passphrase scheme.\n\n`);
+          } catch {
+            /* migration is best-effort - the legacy key still works next run either way */
+          }
+          return oldNoPassWallet;
+        } catch { /* not this scheme either - fall through to the hard failure below */ }
       }
       {
         // A wallet file already exists but couldn't be decrypted under either

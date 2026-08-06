@@ -39,7 +39,6 @@ const SwapSchema = z.object({
 const DEFAULT_MAX_SLIPPAGE_PCT = 1.0;
 const DEFAULT_MAX_PRICE_IMPACT_PCT = 3.0;
 const SendSchema = z.object({ token: z.string().min(1), toAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/, "must be a valid 0x address"), amount: z.string().min(1) });
-const AnalyzeWalletSchema = z.object({ address: z.string().regex(/^0x[0-9a-fA-F]{40}$/, "must be a valid 0x address"), label: z.string().optional() });
 const DefiYieldsSchema = z.object({
   token:  z.string().optional(),
   minApy: z.number().optional(),
@@ -104,7 +103,7 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
 
     case "estimate_swap": {
       const parsed = SwapSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${String(parsed.error.issues[0].path[0])} ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${String(parsed.error.issues[0].path[0])}: ${parsed.error.issues[0].message}` }], isError: true };
       const { fromToken, toToken, amount, maxSlippagePct, maxPriceImpactPct } = parsed.data;
       const slippageLimit = maxSlippagePct ?? DEFAULT_MAX_SLIPPAGE_PCT;
       const impactLimit = maxPriceImpactPct ?? DEFAULT_MAX_PRICE_IMPACT_PCT;
@@ -143,7 +142,7 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
 
     case "swap_tokens": {
       const parsed = SwapSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${String(parsed.error.issues[0].path[0])} ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${String(parsed.error.issues[0].path[0])}: ${parsed.error.issues[0].message}` }], isError: true };
       const { fromToken, toToken, amount, maxSlippagePct, maxPriceImpactPct } = parsed.data;
       const slippageLimit = maxSlippagePct ?? DEFAULT_MAX_SLIPPAGE_PCT;
       const impactLimit = maxPriceImpactPct ?? DEFAULT_MAX_PRICE_IMPACT_PCT;
@@ -197,7 +196,7 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
 
     case "send_token": {
       const parsed = SendSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${String(parsed.error.issues[0].path[0])} ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${String(parsed.error.issues[0].path[0])}: ${parsed.error.issues[0].message}` }], isError: true };
       const { token, toAddress, amount } = parsed.data;
       const wallet = await getOrCreateWallet();
       const result = await callConvex("/mcp/defi/send", "POST", parsed.data, "send_token");
@@ -224,52 +223,15 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
       };
     }
 
-    case "analyze_wallet": {
-      const parsed = AnalyzeWalletSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
-      const { address, label } = parsed.data;
-
-      const data = await callConvex("/wallet/analyze", "POST", { address, label }, "analyze_wallet") as {
-        address?: string;
-        label?: string;
-        totalUsd?: number;
-        holdings?: Array<{ token: string; balance: number; valueUsd: number | null; pct: number | null }>;
-        profile?: string;
-        analysis?: string | null;
-        analysisError?: string;
-        error?: string;
-      };
-
-      if (data.error) return { content: [{ type: "text", text: `Wallet analysis failed: ${data.error}` }], isError: true };
-
-      const total = (data.totalUsd ?? 0).toFixed(2);
-      const walletLabel = label ? ` - ${label}` : "";
-      const topHoldings = (data.holdings ?? [])
-        .slice(0, 8)
-        .map(h => `• **${h.token}**: $${(h.valueUsd ?? 0).toFixed(2)}${h.pct != null ? ` (${h.pct}%)` : ""}`)
-        .join("\n");
-
-      const profileLine = data.profile ? `**Profile:** ${data.profile}\n` : "";
-
-      const header = [
-        `**Wallet Analysis**${walletLabel}`,
-        `\`${address}\``,
-        `**Portfolio value:** $${total}`,
-        ``,
-        profileLine,
-        `**Holdings:**`,
-        topHoldings || "No token holdings found.",
-        ``,
-      ].join("\n");
-
-      const body = data.analysis ?? (data.analysisError ? `*AI analysis unavailable: ${data.analysisError}*` : "*AI analysis not available*");
-
-      return { content: [{ type: "text", text: header + body }] };
-    }
+    // analyze_wallet was removed - it called POST /wallet/analyze, which was
+    // never registered in app/convex/http.ts (only a dangling section-header
+    // comment exists there). The tool was never in the exported DEFI_TOOLS
+    // list either, so this case was already unreachable dead code - no Tool
+    // registers the name "analyze_wallet" for the MCP dispatcher to route to.
 
     case "get_defi_yields": {
       const parsed = DefiYieldsSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: ${parsed.error.issues[0].message}` }], isError: true };
+      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
 
       const { token, minApy = 1, limit = 20 } = parsed.data;
 

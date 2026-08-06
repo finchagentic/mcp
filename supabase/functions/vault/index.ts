@@ -22,7 +22,7 @@ function json(body: unknown, status = 200): Response {
 function slugify(input: string): string {
   return input
     .toLowerCase()
-    .replace(/[^a-z0-9\-\/]/g, "-")
+    .replace(/[^a-z0-9\-/]/g, "-")
     .replace(/-+/g, "-")
     .slice(0, 120);
 }
@@ -100,7 +100,7 @@ async function resolveAuth(
       if (isNaN(ts) || Date.now() - ts > 5 * 60 * 1000) {
         return json({ error: "Timestamp expired" }, 401);
       }
-      const message = `noelclaw:${toolName}:${walletTimestamp}`;
+      const message = `finch:${toolName}:${walletTimestamp}`;
       const recovered = ethers.verifyMessage(message, walletSignature);
       if (recovered.toLowerCase() !== walletAddress.toLowerCase()) {
         return json({ error: "Signature mismatch" }, 401);
