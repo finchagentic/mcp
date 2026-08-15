@@ -49,7 +49,7 @@ async function extractLearning(
   // the catch below swallows that into a silent skip. This early return just
   // avoids building the prompt for a call we already know will fail.
   const hasLLM = !!(process.env.BANKR_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.GROK_API_KEY);
-  if (!hasLLM && !process.env.FINCH_SESSION_TOKEN) {
+  if (!hasLLM) {
     return null;
   }
 

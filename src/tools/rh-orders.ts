@@ -185,8 +185,11 @@ export const RH_ORDER_TOOLS: Tool[] = [
     description:
       "Robinhood Chain — create a DCA plan: buy a fixed ETH amount of a token every N hours, " +
       "up to a total number of buys, capped by maxSpendEth. Token by catalog symbol, crypto " +
-      "ticker, or 0x contract address (resolved via DexScreener). Does NOT execute now — the " +
-      "scheduler runs it via rh_orders_tick. Always confirm the resolved contract address first.",
+      "ticker, or 0x contract address (resolved via DexScreener). Does NOT execute now and does " +
+      "NOT run itself automatically — this only saves the plan. It fires only when something calls " +
+      "rh_orders_tick {execute:true}, which nothing does on its own. Tell the user to run " +
+      "`finch orders install-scheduler` (or `finch orders daemon`) after creating this, or the " +
+      "order will just sit there forever. Always confirm the resolved contract address first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -208,9 +211,11 @@ export const RH_ORDER_TOOLS: Tool[] = [
     name: "rh_bracket_create",
     description:
       "Robinhood Chain — set take-profit and/or stop-loss on a token you HOLD. When DexScreener " +
-      "price crosses tpPriceUsd (≥) or slPriceUsd (≤), the scheduler sells sellPct% of your " +
-      "current balance for ETH via rh_orders_tick. Provide at least one of tpPriceUsd / slPriceUsd. " +
-      "Only ever sells tokens already in the wallet — never borrows or shorts.",
+      "price crosses tpPriceUsd (≥) or slPriceUsd (≤), sellPct% of the current balance sells for " +
+      "ETH — but only when something calls rh_orders_tick {execute:true}, which nothing does on " +
+      "its own by default. Tell the user to run `finch orders install-scheduler` (or `finch orders " +
+      "daemon`) after creating this, or the trigger will never actually fire. Provide at least one " +
+      "of tpPriceUsd / slPriceUsd. Only ever sells tokens already in the wallet — never borrows or shorts.",
     inputSchema: {
       type: "object",
       properties: {
@@ -254,7 +259,9 @@ export const RH_ORDER_TOOLS: Tool[] = [
       "Robinhood Chain — evaluate all active orders and act on any that are due (DCA interval " +
       "reached) or triggered (TP/SL price crossed). PREVIEW by default; pass execute:true to " +
       "broadcast real swaps. Refuses to execute when the kill-switch is set (RH_ORDERS_DISABLED=1 " +
-      "or ~/.finch/rh-orders.OFF). This is the entry point an always-on scheduler calls.",
+      "or ~/.finch/rh-orders.OFF). Nothing calls this automatically — run `finch orders install-scheduler` " +
+      "(OS-level recurring task) or `finch orders daemon` (foreground loop) from a terminal to make " +
+      "orders actually fire unattended; calling this tool by hand only ticks once.",
     inputSchema: {
       type: "object",
       properties: {

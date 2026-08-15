@@ -17,6 +17,9 @@ import { handleResearchTool } from "../src/tools/research.js";
 import { handleMemoryTool } from "../src/tools/memory.js";
 import { handleAutomationTool } from "../src/tools/automation.js";
 import { handleMonitorTool } from "../src/tools/monitor.js";
+import { handleStakeTool } from "../src/tools/stake.js";
+import { handleRhMcpTool } from "../src/tools/rh-mcp.js";
+import { handleVaultTool } from "../src/tools/vault.js";
 
 const text = (r: any) => (r?.content?.[0]?.type === "text" ? r.content[0].text : "");
 
@@ -160,6 +163,149 @@ describe("destructive config tools require confirmation", () => {
     expect(r?.isError).toBe(true);
     expect(text(r)).toContain("Refusing to cancel");
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("fund-moving stake/claim tools require confirmation", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  // These three route through callConvex (an HTTP POST that actually moves
+  // FINCH/USDG once confirmed), same shape as base_mcp_send/base_mcp_swap
+  // above - the audit that flagged this file's coverage found the guards
+  // themselves were already correctly implemented in stake.ts, just never
+  // exercised by a test, so nothing here would have caught a regression.
+
+  it("stake_finch refuses without confirm, before any network call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const r = await handleStakeTool("stake_finch", { amount: "10" });
+
+    expect(r?.isError).toBe(true);
+    expect(text(r)).toContain("confirm");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("unstake_finch refuses without confirm, before any network call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const r = await handleStakeTool("unstake_finch", { stakeId: "stake_abc" });
+
+    expect(r?.isError).toBe(true);
+    expect(text(r)).toContain("confirm");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("claim_vested_rewards refuses without confirm, before any network call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const r = await handleStakeTool("claim_vested_rewards", {});
+
+    expect(r?.isError).toBe(true);
+    expect(text(r)).toContain("confirm");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rh_mcp_swap refuses without confirm, before wallet lookup or any network call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const r = await handleRhMcpTool("rh_mcp_swap", { fromToken: "ETH", toToken: "USDG", amount: "1" });
+
+    expect(r?.isError).toBe(true);
+    expect(text(r)).toContain("confirm");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("vault_delete / memory_delete require confirmation", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("vault_delete refuses without confirm and names what's irreversible", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const r = await handleVaultTool("vault_delete", { key: "agent/researcher" });
+
+    expect(r?.isError).toBe(true);
+    expect(text(r)).toContain("cannot be undone");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("memory_delete refuses without confirm and names what's irreversible", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const r = await handleMemoryTool("memory_delete", { id: "mem_123" });
+
+    expect(r?.isError).toBe(true);
+    expect(text(r)).toContain("cannot be undone");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("packet_share requires confirmation before publishing", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("refuses without confirm, before any network call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const { handlePacket } = await import("../src/tools/packets.js");
+    const r = await handlePacket("packet_share", { name: "my-packet" });
+
+    expect(r?.isError).toBe(true);
+    expect(text(r)).toContain("public to all Finch users");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a wallet address as authorName even when confirmed", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const { handlePacket } = await import("../src/tools/packets.js");
+    const r = await handlePacket("packet_share", {
+      name: "my-packet",
+      confirm: true,
+      authorName: "0x000000000000000000000000000000000000dEaD",
+    });
+
+    expect(r?.isError).toBe(true);
+    expect(text(r)).toContain("wallet address");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("rh_orders_tick previews by default - never broadcasts without execute:true", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.RH_ORDERS_DISABLED;
+  });
+
+  // rh_dca_create/rh_bracket_create don't move funds themselves - they only
+  // write a LOCAL pending order (~/.finch/rh-orders.json). The real gate is
+  // on rh_orders_tick: doExecute = execute===true && !killSwitchOn(). With
+  // no active orders in the store (a fresh/empty store, which is what a
+  // clean test environment has), a tick can never act regardless of the
+  // execute flag - that's the property this locks down, without touching
+  // the real local order file (RH_ORDERS_DISABLED forces the kill-switch
+  // via env instead of the ~/.finch/rh-orders.OFF file, so no filesystem
+  // write is needed to exercise it).
+  it("execute:true with the kill-switch on reports blocked and takes no action", async () => {
+    process.env.RH_ORDERS_DISABLED = "1";
+    const { handleRhOrderTool } = await import("../src/tools/rh-orders.js");
+    const r = await handleRhOrderTool("rh_orders_tick", { execute: true });
+
+    expect(text(r)).toMatch(/BLOCKED by kill-switch/);
+  });
+
+  it("execute omitted defaults to a preview, not execution", async () => {
+    const { handleRhOrderTool } = await import("../src/tools/rh-orders.js");
+    const r = await handleRhOrderTool("rh_orders_tick", {});
+
+    expect(text(r)).toMatch(/PREVIEW/);
   });
 });
 

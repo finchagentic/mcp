@@ -27,7 +27,19 @@ async function attemptConvex(url: string, method: string, headers: Record<string
   });
 }
 
-export async function callConvex(path: string, method: string, body?: unknown, toolName = "unknown", timeoutMs = 30_000): Promise<any> {
+export async function callConvex(
+  path: string, method: string, body?: unknown, toolName = "unknown", timeoutMs = 30_000,
+  // Fund-moving mutations (stake, unstake, claim rewards, a real - non-
+  // dryRun - automation trigger) are NOT idempotent server-side: there is
+  // no request-id dedup on the backend, so silently retrying a POST whose
+  // response was merely lost (a network blip or client-side timeout AFTER
+  // the server already processed it) can double-execute a real transfer.
+  // Pass true here for any such call - it trades the convenience of an
+  // automatic retry for never risking a duplicate execution; the caller
+  // sees a clear "may have already gone through" error instead and can
+  // check status before deciding to retry by hand.
+  noRetry = false,
+): Promise<any> {
   const url = `${CONVEX_SITE}${path}`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
@@ -62,7 +74,8 @@ export async function callConvex(path: string, method: string, body?: unknown, t
   if (process.env.BANKR_API_KEY) headers["X-User-Bankr-Key"] = process.env.BANKR_API_KEY;
 
   let lastError: Error | null = null;
-  for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
+  const attempts = noRetry ? 1 : RETRY_DELAYS.length;
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) {
       await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt - 1]));
     }
@@ -70,7 +83,14 @@ export async function callConvex(path: string, method: string, body?: unknown, t
     try {
       res = await attemptConvex(url, method, headers, body, timeoutMs);
     } catch (err: any) {
-      lastError = err;
+      // Ambiguous: the request may never have reached the server, or it may
+      // have been received and even processed before the connection died -
+      // there's no way to tell from here. Safe to retry for read-only/
+      // idempotent calls; for a fund-moving one, retrying risks resending a
+      // mutation that already landed.
+      lastError = noRetry
+        ? new Error(`${err?.message ?? err} - request may or may not have completed (no response received). Check status before retrying manually.`)
+        : err;
       continue;
     }
 
@@ -91,7 +111,7 @@ export async function callConvex(path: string, method: string, body?: unknown, t
       );
     }
 
-    if (RETRY_STATUSES.has(res.status) && attempt < RETRY_DELAYS.length) {
+    if (RETRY_STATUSES.has(res.status) && attempt < attempts - 1) {
       // Capture the actual body so a deterministic error (e.g. "unknown
       // token") that happens to come back on a 500 still surfaces its real
       // message if retries exhaust - previously this discarded the body
@@ -100,6 +120,18 @@ export async function callConvex(path: string, method: string, body?: unknown, t
       const bodyText = await res.text().catch(() => "");
       lastError = new Error(`Finch API error ${res.status}: ${bodyText.slice(0, 300) || "(no body)"}`);
       continue;
+    }
+
+    // noRetry + a retryable status on the one and only attempt: the server
+    // definitely received this one (unlike the network-exception case
+    // above), so it may have partially or fully processed it before
+    // erroring - same "check before retrying" caution, worded for the case
+    // where we know a response did come back.
+    if (RETRY_STATUSES.has(res.status) && noRetry) {
+      const bodyText = await res.text().catch(() => "");
+      throw new Error(
+        `Finch API error ${res.status}: ${bodyText.slice(0, 300) || "(no body)"} - the server received this request and may have processed it before erroring. Check status before retrying manually.`
+      );
     }
 
     if (!res.ok) throw new Error(`Finch API error: ${res.status} ${await res.text()}`);

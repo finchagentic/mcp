@@ -315,7 +315,11 @@ export async function handleAutomationTool(name: string, args: unknown): Promise
       const parsed = RunAutomationSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `Invalid input: automationId ${parsed.error.issues[0].message}` }], isError: true };
       const { automationId, dryRun } = parsed.data;
-      const data = await callConvex("/automations/run", "POST", { automationId, dryRun: !!dryRun }, "run_automation");
+      // A real (non-dryRun) trigger moves funds if the automation is a
+      // swap/send - noRetry so a lost response never risks re-sending the
+      // same trigger. A dryRun call does nothing server-side, so retrying
+      // it is harmless and stays on the default retry behavior.
+      const data = await callConvex("/automations/run", "POST", { automationId, dryRun: !!dryRun }, "run_automation", 30_000, !dryRun);
       if (data.error) {
         const cat = categorizeError(data.error);
         return {

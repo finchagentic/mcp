@@ -283,7 +283,7 @@ export async function handleStakeTool(name: string, args: unknown): Promise<Tool
       };
     }
 
-    const result = await callConvex("/mcp/stake/stake", "POST", { amountWei: amountWei.toString(), lockTier }, "stake_finch") as {
+    const result = await callConvex("/mcp/stake/stake", "POST", { amountWei: amountWei.toString(), lockTier }, "stake_finch", 30_000, true) as {
       stakeId?: string; txHash?: string; error?: string;
     };
     if (result.error) return { content: [{ type: "text", text: `Stake failed: ${result.error}` }], isError: true };
@@ -334,7 +334,7 @@ export async function handleStakeTool(name: string, args: unknown): Promise<Tool
 
     const lines: string[] = [];
     for (const id of targetIds) {
-      const result = await callConvex("/mcp/stake/unstake", "POST", { stakeId: id }, "unstake_finch") as {
+      const result = await callConvex("/mcp/stake/unstake", "POST", { stakeId: id }, "unstake_finch", 30_000, true) as {
         txHash?: string; rewardsTxHash?: string; error?: string;
       };
       if (result.error) {
@@ -357,7 +357,7 @@ export async function handleStakeTool(name: string, args: unknown): Promise<Tool
     const login = requireLogin();
     if (!login) return { content: [{ type: "text", text: NOT_LOGGED_IN_MSG }], isError: true };
 
-    const result = await callConvex("/mcp/stake/claim-rewards", "POST", {}, "claim_vested_rewards") as {
+    const result = await callConvex("/mcp/stake/claim-rewards", "POST", {}, "claim_vested_rewards", 30_000, true) as {
       claimedAmount?: number; txHash?: string; rewardIds?: string[]; error?: string;
     };
     if (result.error) return { content: [{ type: "text", text: `Claim failed: ${result.error}` }], isError: true };
