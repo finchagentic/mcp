@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
 import { readConfig } from "./config.js";
+import { meaningfulTerms, wordOccurrences } from "./_text-search.js";
 
 // Fully-local, user-owned Noel-Vault backend. Mirrors the two-tier pattern of
 // local-memory.ts: when the user opts in (`vaultBackend: "local"`), the vault
@@ -238,8 +239,9 @@ export function localVaultList(cfg: LocalVaultConfig, opts: { type?: string; age
 
 export function localVaultSearch(cfg: LocalVaultConfig, query: string, opts: { type?: string; limit?: number }): { results: any[] } {
   const idx = readIndex(cfg);
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = meaningfulTerms(query);
   const scored: Array<{ e: EntryMeta; score: number; preview: string }> = [];
+  if (terms.length === 0) return { results: [] };
   for (const e of Object.values(idx.entries)) {
     if (e.type === "credential") continue;
     if (opts.type && e.type !== opts.type) continue;
@@ -249,8 +251,7 @@ export function localVaultSearch(cfg: LocalVaultConfig, query: string, opts: { t
     for (const t of terms) {
       if (e.title.toLowerCase().includes(t)) score += 3;
       if (e.tags.some((tag) => tag.toLowerCase().includes(t))) score += 2;
-      const occurrences = hay.split(t).length - 1;
-      score += Math.min(occurrences, 5);
+      score += Math.min(wordOccurrences(hay, t), 5);
     }
     if (score > 0) {
       const firstHit = terms.map((t) => content.toLowerCase().indexOf(t)).filter((i) => i >= 0).sort((a, b) => a - b)[0] ?? 0;

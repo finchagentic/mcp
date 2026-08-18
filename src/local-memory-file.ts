@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
+import { meaningfulTerms, wordOccurrences } from "./_text-search.js";
 
 // Fully-local, user-owned memory backend - the memory-side counterpart to
 // local-vault.ts. Stores every memory as one row in a single JSON index under
@@ -117,7 +118,8 @@ export function fileMemorySearch(
   limit: number,
 ): Array<{ id: string; content: string; metadata: any; score?: number }> {
   const idx = readIndex(cfg);
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = meaningfulTerms(query);
+  if (terms.length === 0) return [];
   const scored: Array<{ m: MemoryRow; score: number }> = [];
   for (const m of idx.memories) {
     const hay = `${m.title ?? ""}\n${(m.tags ?? []).join(" ")}\n${m.content}`.toLowerCase();
@@ -125,7 +127,7 @@ export function fileMemorySearch(
     for (const t of terms) {
       if ((m.title ?? "").toLowerCase().includes(t)) score += 3;
       if ((m.tags ?? []).some((tag) => tag.toLowerCase().includes(t))) score += 2;
-      score += Math.min(hay.split(t).length - 1, 5);
+      score += Math.min(wordOccurrences(hay, t), 5);
     }
     if (score > 0) scored.push({ m, score });
   }

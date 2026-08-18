@@ -29,13 +29,13 @@ Always pin the version. Never use `@latest`.
 
 ```bash
 # One-command installer (detects common MCP clients)
-npx -y -p @finchagentic/mcp@4.6.0 finch install
+npx -y -p @finchagentic/mcp@4.6.1 finch install
 ```
 
 ### Claude Code
 
 ```bash
-claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.6.0 finch-mcp
+claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.6.1 finch-mcp
 ```
 
 ### Cursor / Windsurf / Claude Desktop
@@ -45,7 +45,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.6.0 finch-mcp
   "mcpServers": {
     "finch": {
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.6.0", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.6.1", "finch-mcp"]
     }
   }
 }
@@ -59,7 +59,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.6.0 finch-mcp
     "finch": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.6.0", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.6.1", "finch-mcp"]
     }
   }
 }
@@ -124,7 +124,7 @@ Default palette is `core` (lighter context). Full set:
 Finch is the runtime. **Your LLM is the brain. Your data stays yours.**
 
 ```bash
-npx -y -p @finchagentic/mcp@4.6.0 finch setup
+npx -y -p @finchagentic/mcp@4.6.1 finch setup
 # enable local vault (and optional local memory)
 ```
 
@@ -156,7 +156,7 @@ Scheduled/cloud features still need an account. Core memory, vault, and public-d
 Guided setup:
 
 ```bash
-npx -y -p @finchagentic/mcp@4.6.0 finch setup
+npx -y -p @finchagentic/mcp@4.6.1 finch setup
 ```
 
 ## Security
@@ -165,7 +165,7 @@ npx -y -p @finchagentic/mcp@4.6.0 finch setup
 |:-:|----------|------|
 | 1 | Prompt injection | External content is data only — never instructions |
 | 2 | Mainnet confirm | Estimate → preview → confirm → execute |
-| 3 | Pinned install | Always `@finchagentic/mcp@4.6.0`, never `@latest` |
+| 3 | Pinned install | Always `@finchagentic/mcp@4.6.1`, never `@latest` |
 | 4 | Credential vault | Never paste secrets into prompts or third-party tools |
 | 5 | Data disclosure | Know what leaves the machine (LLM, Firecrawl, GitHub, chain RPCs) |
 | 6 | Server monitors | Scheduled jobs need explicit confirmation |

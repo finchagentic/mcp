@@ -18,6 +18,11 @@ All notable changes to **@finchagentic/mcp** are documented in this file.
 
 ## [Unreleased]
 
+## [4.6.1] — 2026-08-19
+
+### Fixed
+- **Local-file memory/vault search matched on raw substrings, not words** - found immediately after 4.6.0 shipped, by actually live-testing the new conflict-hint feature end to end (isolated fake-`$HOME` run, not against the real backend) instead of stopping at unit tests. A query for "the user's favorite pizza topping is pepperoni" registered as "related" to a completely unrelated stored memory about metric vs imperial units, purely because both happened to contain "the"/"is" - `hay.split(term).length - 1` counted "is" as a substring hit inside words like "distances" too. Fixed in both `local-memory-file.ts` and `local-vault.ts` (same bug, same code shape, in parallel implementations) via a new shared `_text-search.ts`: stop-words are dropped before scoring, and remaining terms are matched on word boundaries, not raw substrings. `memory_add`'s new conflict-hint from 4.6.0 also got a second layer of defense on top: it now requires >=2 distinct shared meaningful terms between two memories (not just whatever the search backend's own normalized top-result score says), since a single common word like "user" - present in nearly every memory in a single-user system - was otherwise enough to flag two totally unrelated notes as conflicting.
+
 ## [4.6.0] — 2026-08-18
 
 ### Added

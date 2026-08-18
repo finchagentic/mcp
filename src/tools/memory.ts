@@ -13,6 +13,7 @@ import {
   localMemoryDelete,
   localMemoryProfile,
 } from "../local-memory.js";
+import { meaningfulTerms } from "../_text-search.js";
 
 // memory_extract and memory_consolidate used to run their own LLM calls here
 // (and a matching pair of Convex routes did the same server-side). Both are now
@@ -608,10 +609,24 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       // that already succeeded above.
       let conflictNote = "";
       try {
-        const related = await hybridMemorySearch(content, 6);
+        const related = await hybridMemorySearch(content, 8);
+        // hybridMemorySearch's score is rank-based and normalized per-call -
+        // a single weak match (one common word) can still come back as
+        // "top result, 100%" purely for lack of competition. Found live:
+        // "the user's favorite pizza topping" registered as "related" to a
+        // completely unrelated units-preference memory, because both
+        // happened to say "user". Counting actual shared meaningful terms
+        // (>=2 distinct, not stop words) is a real, absolute bar instead of
+        // trusting a relative score - "user" alone no longer qualifies,
+        // "user"+"prefers"+"units"+"metric"/"imperial" does.
+        const newTerms = new Set(meaningfulTerms(content));
         const candidates = related
           .filter((r) => r.id !== data?.id && contentHash(r.content) !== hash)
-          .slice(0, 3);
+          .map((r) => ({ r, overlap: new Set(meaningfulTerms(r.content).filter((t) => newTerms.has(t))).size }))
+          .filter((x) => x.overlap >= 2)
+          .sort((a, b) => b.overlap - a.overlap)
+          .slice(0, 3)
+          .map((x) => x.r);
         if (candidates.length) {
           conflictNote = "\n\n⚠️ **Possibly related existing memories** - skim these for a conflict with what you just saved (e.g. an old preference this replaces):\n" +
             candidates.map((r) => `- \`${r.id}\`: ${r.content.slice(0, 100)}${r.content.length > 100 ? "…" : ""}`).join("\n");

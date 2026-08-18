@@ -113,6 +113,16 @@ describe("local vault - list / search / tags / pin", () => {
     expect(res.results[0].preview).toContain("conservative");
   });
 
+  it("does not match a query word as a raw substring of an unrelated word (regression)", () => {
+    // "is" is a substring of "distances" - a naive `hay.split(term).length - 1`
+    // scorer (the actual pre-fix bug, caught live-testing memory_add's
+    // conflict-hint feature) would count that as a hit. Word-boundary
+    // matching must not.
+    localVaultSave(cfg, { type: "research", title: "Units", content: "The user prefers metric distances over imperial ones." });
+    const res = localVaultSearch(cfg, "is the", { limit: 10 }); // pure stop words
+    expect(res.results).toHaveLength(0);
+  });
+
   it("adds and replaces tags", () => {
     const { key } = localVaultSave(cfg, { type: "research", title: "T", content: "x", tags: ["a"] });
     expect(localVaultTag(cfg, key, ["b"], false).tags.sort()).toEqual(["a", "b"]);
