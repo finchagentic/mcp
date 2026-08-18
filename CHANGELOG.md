@@ -18,6 +18,11 @@ All notable changes to **@finchagentic/mcp** are documented in this file.
 
 ## [Unreleased]
 
+## [4.6.0] — 2026-08-18
+
+### Added
+- **`memory_add` now hints at possibly-conflicting existing memories.** Researched how Mem0/Zep/Letta handle this (Zep's temporal knowledge graph tracks when a fact stops being valid) and adapted the idea to Finch's existing "two-pass, no API key needed" philosophy instead of adding a server-side LLM contradiction check: after a save succeeds, `memory_add` re-runs the same hybrid retrieval `memory_search` already trusts against the new content, and surfaces up to 3 existing memories with real keyword overlap as a HINT, not a verdict. The calling model - already reasoning about this exact save, in the same turn, no extra API cost - decides whether the two actually conflict (e.g. an old preference the new one supersedes) and what to do about it. Best-effort and wrapped so a search hiccup here can never fail or block the save that already succeeded.
+
 ## [4.4.1] — 2026-08-07
 
 ### Fixed

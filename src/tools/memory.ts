@@ -305,7 +305,11 @@ export const MEMORY_TOOLS: Tool[] = [
       "searchable in ~30s. Retrieval is full-text (keyword) search, not embeddings - " +
       "'what did I say about ETH yield?' finds notes containing those words or close variants, " +
       "not unrelated phrasing with the same meaning. " +
-      "Auto-deduplicates: identical content in your recent 50 memories is skipped (override with force:true).",
+      "Auto-deduplicates: identical content in your recent 50 memories is skipped (override with force:true). " +
+      "Also surfaces up to 3 existing memories that share real keyword overlap with what you just saved (a " +
+      "possible-conflict HINT, not a verdict - Finch doesn't call an LLM to judge this). When that shows up, " +
+      "read them and decide yourself whether the new one supersedes an old preference/fact; if so, say so in a " +
+      "follow-up memory_add, or fold both into one with memory_consolidate.",
     inputSchema: {
       type: "object",
       properties: {
@@ -590,6 +594,32 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       // dedupes even before supermemory has indexed the first one.
       if (!sourceUrl) rememberRecentHash(hash, data?.id ?? "saved", title);
 
+      // ─── Conflict hint (not a proof) ──────────────────────────────────
+      // Finch never runs its own LLM call to judge this - "two-pass, no API
+      // key needed" is deliberate (see this file's header comment), and an
+      // autonomous contradiction call would break that. Instead this just
+      // resurfaces whatever memory_search's own retrieval already ranks as
+      // related to the content just saved, so the CALLING model - already
+      // reasoning about this exact save, in the same turn, no extra API
+      // cost - can judge for itself whether the two actually conflict and
+      // decide what to do (mark the old one superseded, fold both into
+      // memory_consolidate, or just note the new one is the current one).
+      // Best-effort: a search hiccup here must never fail or block the save
+      // that already succeeded above.
+      let conflictNote = "";
+      try {
+        const related = await hybridMemorySearch(content, 6);
+        const candidates = related
+          .filter((r) => r.id !== data?.id && contentHash(r.content) !== hash)
+          .slice(0, 3);
+        if (candidates.length) {
+          conflictNote = "\n\n⚠️ **Possibly related existing memories** - skim these for a conflict with what you just saved (e.g. an old preference this replaces):\n" +
+            candidates.map((r) => `- \`${r.id}\`: ${r.content.slice(0, 100)}${r.content.length > 100 ? "…" : ""}`).join("\n");
+        }
+      } catch {
+        // best-effort only
+      }
+
       return {
         content: [{
           type: "text",
@@ -600,7 +630,7 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
             tags?.length ? `Tags: ${tags.join(", ")}` : "",
             ``,
             `Find it with: \`memory_search query: "${(title ?? content).slice(0, 40)}"\``,
-          ].filter(Boolean).join("\n"),
+          ].filter(Boolean).join("\n") + conflictNote,
         }],
       };
     }
