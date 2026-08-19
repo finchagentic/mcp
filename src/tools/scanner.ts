@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
 import { cachedFetch } from "../_http-cache.js";
+import { parseOrError } from "../_zod-helpers.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DEFAULT_MIN_LIQ   = 50_000;
@@ -410,8 +411,8 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
 
   // ── score_token ────────────────────────────────────────────────────────────
   if (name === "score_token") {
-    const parsed = ScoreTokenSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(ScoreTokenSchema, args);
+    if (!parsed.ok) return parsed.error;
 
     const { address, minLiquidity = DEFAULT_MIN_LIQ } = parsed.data;
 
@@ -485,8 +486,8 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
 
   // ── check_token ────────────────────────────────────────────────────────────
   if (name === "check_token") {
-    const parsed = CheckTokenSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(CheckTokenSchema, args);
+    if (!parsed.ok) return parsed.error;
 
     const { address } = parsed.data;
 
@@ -555,8 +556,8 @@ export async function handleScannerTool(name: string, args: unknown): Promise<To
 
   // ── scan_market ────────────────────────────────────────────────────────────
   if (name === "scan_market") {
-    const parsed = ScanDipsSchema.safeParse(args ?? {});
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(ScanDipsSchema, args ?? {});
+    if (!parsed.ok) return parsed.error;
 
     const input = args as any;
     const mode = input?.mode === "momentum" ? "momentum" : "dips";

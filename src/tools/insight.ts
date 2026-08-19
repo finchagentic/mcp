@@ -6,6 +6,7 @@ import { ToolResult } from "../types.js";
 import { searchSupermemory, syncToSupermemory } from "./memory.js";
 import { enrichQuery, todayContext } from "../enrichment-router.js";
 import { checkSignal } from "../signal-gate.js";
+import { parseOrError } from "../_zod-helpers.js";
 
 export const INSIGHT_TOOLS: Tool[] = [
   {
@@ -499,8 +500,8 @@ export async function handleInsightTool(name: string, args: unknown): Promise<To
   }
 
   if (name === "market_thesis") {
-    const parsed = MarketThesisSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(MarketThesisSchema, args);
+    if (!parsed.ok) return parsed.error;
 
     const { token, context } = parsed.data;
     const priceData = await fetchVerifiedPrice(token);
@@ -572,8 +573,8 @@ export async function handleInsightTool(name: string, args: unknown): Promise<To
   }
 
   if (name === "trade_plan") {
-    const parsed = TradePlanSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(TradePlanSchema, args);
+    if (!parsed.ok) return parsed.error;
 
     const { token, side = "long", portfolioSize, riskTolerance = "moderate", timeframe } = parsed.data;
     const priceData = await fetchVerifiedPrice(token);

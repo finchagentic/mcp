@@ -14,6 +14,7 @@ import {
   localMemoryProfile,
 } from "../local-memory.js";
 import { meaningfulTerms } from "../_text-search.js";
+import { parseOrError } from "../_zod-helpers.js";
 
 // memory_extract and memory_consolidate used to run their own LLM calls here
 // (and a matching pair of Convex routes did the same server-side). Both are now
@@ -544,8 +545,8 @@ export function buildMemoryList(tag: string | undefined, results: any[]): Record
 export async function handleMemoryTool(name: string, args: unknown): Promise<ToolResult | null> {
   switch (name) {
     case "memory_add": {
-      const parsed = AddSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(AddSchema, args);
+      if (!parsed.ok) return parsed.error;
 
       const { content, title, tags, sourceUrl, force } = parsed.data;
 
@@ -651,8 +652,8 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     }
 
     case "memory_search": {
-      const parsed = SearchSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(SearchSchema, args);
+      if (!parsed.ok) return parsed.error;
 
       const { query, limit = 10 } = parsed.data;
       // Over-fetch so post-decay ranking still has enough material.
@@ -740,8 +741,8 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     }
 
     case "memory_context": {
-      const parsed = ContextSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(ContextSchema, args);
+      if (!parsed.ok) return parsed.error;
 
       const { topic, limit = 8 } = parsed.data;
       // v3.25.1: use hybrid retrieval so context loading picks up exact-token
@@ -805,8 +806,8 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     }
 
     case "memory_list": {
-      const parsed = ListSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(ListSchema, args ?? {});
+      if (!parsed.ok) return parsed.error;
       const { limit = 20, tag } = parsed.data;
       const localList = getLocalMemoryConfig();
       let results: any[];
@@ -832,8 +833,8 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     }
 
     case "memory_delete": {
-      const parsed = DeleteMemSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(DeleteMemSchema, args);
+      if (!parsed.ok) return parsed.error;
       if ((args as { confirm?: boolean })?.confirm !== true) {
         return {
           content: [{
@@ -861,8 +862,8 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     }
 
     case "memory_insight": {
-      const parsed = InsightSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(InsightSchema, args);
+      if (!parsed.ok) return parsed.error;
 
       const { topic, depth = "standard" } = parsed.data;
       const memLimit = depth === "deep" ? 15 : depth === "quick" ? 5 : 8;
@@ -963,8 +964,8 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     }
 
     case "memory_extract": {
-      const parsed = ExtractSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(ExtractSchema, args);
+      if (!parsed.ok) return parsed.error;
       const { text, facts, source = "extract" } = parsed.data;
 
       // ── PASS 1: hand the text back with the extraction rubric ───────────
@@ -1027,8 +1028,8 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
     }
 
     case "memory_consolidate": {
-      const parsed = ConsolidateSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(ConsolidateSchema, args);
+      if (!parsed.ok) return parsed.error;
       const { topic, limit = 12, summary } = parsed.data;
       const localConsolidateCfg = getLocalMemoryConfig();
 

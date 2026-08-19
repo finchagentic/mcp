@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { callConvex } from "../convex.js";
 import { ToolResult } from "../types.js";
+import { parseOrError } from "../_zod-helpers.js";
 
 const TRIGGER_BASE = "https://api.trigger.dev/api/v1";
 const MONITOR_TASK_ID = "finch-monitor";
@@ -117,8 +118,8 @@ export function buildMonitorList(
 
 export async function handleMonitorTool(name: string, args: unknown): Promise<ToolResult | null> {
   if (name === "schedule_research") {
-    const parsed = CreateSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(CreateSchema, args);
+    if (!parsed.ok) return parsed.error;
     const key = getKey();
     if (!key) return noKeyMsg();
 
@@ -306,8 +307,8 @@ export async function handleMonitorTool(name: string, args: unknown): Promise<To
   }
 
   if (name === "cancel_monitor") {
-    const parsed = CancelSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(CancelSchema, args);
+    if (!parsed.ok) return parsed.error;
     if ((args as { confirm?: boolean })?.confirm !== true) {
       return {
         content: [{

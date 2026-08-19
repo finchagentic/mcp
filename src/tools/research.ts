@@ -3,6 +3,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
 import { callConvex } from "../convex.js";
 import { assertPublicUrl, refuseUrlText } from "../public-url.js";
+import { parseOrError } from "../_zod-helpers.js";
 
 const FC_BASE = "https://api.firecrawl.dev/v1";
 
@@ -102,8 +103,8 @@ async function basicFetch(url: string): Promise<string | null> {
 
 export async function handleResearchTool(name: string, args: unknown): Promise<ToolResult | null> {
   if (name === "web_scrape") {
-    const parsed = ScrapeSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(ScrapeSchema, args);
+    if (!parsed.ok) return parsed.error;
     const { url, focus } = parsed.data;
 
     const unsafe = await assertPublicUrl(url);
@@ -126,8 +127,8 @@ export async function handleResearchTool(name: string, args: unknown): Promise<T
   }
 
   if (name === "web_search") {
-    const parsed = SearchSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(SearchSchema, args);
+    if (!parsed.ok) return parsed.error;
     const { query, limit = 5 } = parsed.data;
 
     // Priority 1: user BYOK direct path. Priority 2: Finch proxy.

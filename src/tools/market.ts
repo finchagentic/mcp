@@ -3,6 +3,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
 import { cachedFetch } from "../_http-cache.js";
 import { pickTokenPair } from "../dex-pair.js";
+import { parseOrError } from "../_zod-helpers.js";
 
 const COINGECKO = "https://api.coingecko.com/api/v3";
 
@@ -301,8 +302,8 @@ export async function fetchMarketSnapshot(): Promise<MarketSnapshot | null> {
 export async function handleMarketTool(name: string, args: unknown): Promise<ToolResult | null> {
   switch (name) {
     case "get_market_data": {
-      const parsed = GetMarketDataSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(GetMarketDataSchema, args ?? {});
+      if (!parsed.ok) return parsed.error;
 
       const { token } = parsed.data;
 
@@ -362,8 +363,8 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
     }
 
     case "get_token_data": {
-      const parsed = GetTokenDataSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(GetTokenDataSchema, args);
+      if (!parsed.ok) return parsed.error;
 
       const q = parsed.data.question;
       // Try to extract a known symbol first, then fall back to search
@@ -395,8 +396,8 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
     }
 
     case "compare_tokens": {
-      const parsed = CompareTokensSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(CompareTokensSchema, args);
+      if (!parsed.ok) return parsed.error;
 
       const syms = parsed.data.tokens.map(t => t.toUpperCase());
       const ids = syms.map(s => SYMBOL_TO_ID[s]).filter(Boolean);
@@ -475,8 +476,8 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
     }
 
     case "token_history": {
-      const parsed = TokenHistorySchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(TokenHistorySchema, args);
+      if (!parsed.ok) return parsed.error;
 
       const days = parsed.data.days ?? 7;
       const resolved = await resolveTokenId(parsed.data.token);
@@ -529,8 +530,8 @@ export async function handleMarketTool(name: string, args: unknown): Promise<Too
     }
 
     case "get_base_token_data": {
-      const parsed = GetBaseTokenDataSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(GetBaseTokenDataSchema, args);
+      if (!parsed.ok) return parsed.error;
 
       const address = parsed.data.tokenAddress.toLowerCase();
       const [pair, coingeckoId] = await Promise.all([

@@ -6,6 +6,7 @@ import { ToolResult } from "../types.js";
 import { getLocalVaultConfig, localVaultSave, localVaultRead, localVaultHistory } from "../local-vault.js";
 import { hybridMemorySearch } from "./memory.js";
 import { resolveProjectId } from "../project.js";
+import { parseOrError } from "../_zod-helpers.js";
 
 // ─── Agent Learning Memory (v3.25) ──────────────────────────────────────────
 // After every agent_update, an LLM reviews the new progress in context of the
@@ -241,8 +242,8 @@ export function buildAgentLedger(name: string, versions: any[]): Record<string, 
 
 export async function handleAgentTool(name: string, args: unknown): Promise<ToolResult | null> {
   if (name === "agent_spawn") {
-    const parsed = SpawnAgentSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(SpawnAgentSchema, args);
+    if (!parsed.ok) return parsed.error;
     const { name: agentName, goal, context, workspaceProject } = parsed.data;
 
     const content = JSON.stringify({
@@ -288,8 +289,8 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
   }
 
   if (name === "agent_recall") {
-    const parsed = RecallAgentSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(RecallAgentSchema, args);
+    if (!parsed.ok) return parsed.error;
 
     const localVault = getLocalVaultConfig();
     let data: { key?: string; content?: string; version?: number; updatedAt?: number; error?: string };
@@ -357,8 +358,8 @@ export async function handleAgentTool(name: string, args: unknown): Promise<Tool
   }
 
   if (name === "agent_update") {
-    const parsed = UpdateAgentSchema.safeParse(args);
-    if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+    const parsed = parseOrError(UpdateAgentSchema, args);
+    if (!parsed.ok) return parsed.error;
     const { name: agentName, progress, findings, status = "active", nextStep } = parsed.data;
 
     return withAgentLock(agentName, async () => {

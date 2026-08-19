@@ -12,6 +12,7 @@ import {
 } from "../local-vault.js";
 import { getLocalMemoryConfig, localMemoryDeleteByVaultKey } from "../local-memory.js";
 import { resolveProjectId } from "../project.js";
+import { parseOrError } from "../_zod-helpers.js";
 
 const VAULT_TYPES = ["research", "execution", "workflow", "prompt", "file", "memory", "code", "credential"] as const;
 
@@ -399,8 +400,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
   const localVault = getLocalVaultConfig();
   switch (name) {
     case "vault_save": {
-      const parsed = SaveSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(SaveSchema, args);
+      if (!parsed.ok) return parsed.error;
       if (parsed.data.type === "credential") {
         // vault_save writes plaintext to disk/DB - "credential" is only a
         // valid FILTER value for vault_list/search/export (which correctly
@@ -485,8 +486,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "code_session_save": {
-      const parsed = CodeSessionSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(CodeSessionSchema, args);
+      if (!parsed.ok) return parsed.error;
       const { project, summary, filesChanged, decisions, nextSteps, tags } = parsed.data;
 
       const projectSlug = project.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "session";
@@ -576,8 +577,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_read": {
-      const parsed = ReadSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(ReadSchema, args);
+      if (!parsed.ok) return parsed.error;
       const vaultReadKey = parsed.data.key;
       let data: any;
       try {
@@ -661,8 +662,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_list": {
-      const parsed = ListSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(ListSchema, args ?? {});
+      if (!parsed.ok) return parsed.error;
       const params = new URLSearchParams();
       if (parsed.data.type) params.set("type", parsed.data.type);
       if (parsed.data.agentId) params.set("agentId", parsed.data.agentId);
@@ -692,8 +693,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_search": {
-      const parsed = SearchSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(SearchSchema, args);
+      if (!parsed.ok) return parsed.error;
 
       // Full-text search, proxied through Convex (searchSupermemory is a
       // legacy name - it calls Finch's own /memory/search endpoint, not a
@@ -810,8 +811,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_history": {
-      const parsed = HistorySchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(HistorySchema, args);
+      if (!parsed.ok) return parsed.error;
       const histKey = parsed.data.key;
       let data: any;
       try {
@@ -852,8 +853,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_diff": {
-      const parsed = DiffSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(DiffSchema, args);
+      if (!parsed.ok) return parsed.error;
       const { key, fromVersion, toVersion } = parsed.data;
       let data: any;
       try {
@@ -899,8 +900,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_export": {
-      const parsed = ExportSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(ExportSchema, args ?? {});
+      if (!parsed.ok) return parsed.error;
       const params = parsed.data.type ? `?type=${parsed.data.type}` : "";
       const data = localVault
         ? localVaultExport(localVault, parsed.data.type)
@@ -920,8 +921,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_store_credential": {
-      const parsed = StoreCredentialSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(StoreCredentialSchema, args);
+      if (!parsed.ok) return parsed.error;
       const data = localVault
         ? localVaultStoreCredential(localVault, parsed.data.name, parsed.data.value, parsed.data.description)
         : await callConvex("/vault/credential/store", "POST", parsed.data, "vault_store_credential");
@@ -930,8 +931,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_get_credential": {
-      const parsed = GetCredentialSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(GetCredentialSchema, args);
+      if (!parsed.ok) return parsed.error;
       const params = new URLSearchParams({ name: parsed.data.name });
       let data: any;
       try {
@@ -949,8 +950,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_pin": {
-      const parsed = PinSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(PinSchema, args);
+      if (!parsed.ok) return parsed.error;
       const { key, pinned = true } = parsed.data;
       const data = localVault
         ? localVaultPin(localVault, key, pinned)
@@ -960,8 +961,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_unpublish": {
-      const parsed = UnpublishSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(UnpublishSchema, args);
+      if (!parsed.ok) return parsed.error;
       // Publishing is a hosted/marketplace concept - a local vault is private
       // by construction, so there is nothing to retract.
       if (localVault) {
@@ -981,8 +982,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_delete": {
-      const parsed = DeleteSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(DeleteSchema, args);
+      if (!parsed.ok) return parsed.error;
       if ((args as { confirm?: boolean })?.confirm !== true) {
         return {
           content: [{
@@ -1017,8 +1018,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_tag": {
-      const parsed = TagSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(TagSchema, args);
+      if (!parsed.ok) return parsed.error;
       const { key, tags, replace = false } = parsed.data;
       const data = localVault
         ? localVaultTag(localVault, key, tags, replace)
@@ -1028,8 +1029,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_link": {
-      const parsed = LinkSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(LinkSchema, args);
+      if (!parsed.ok) return parsed.error;
       const { fromKey, toKey, relation } = parsed.data;
       const data = localVault
         ? localVaultLink(localVault, fromKey, toKey, relation)
@@ -1040,8 +1041,8 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
     }
 
     case "vault_related": {
-      const parsed = RelatedSchema.safeParse(args);
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(RelatedSchema, args);
+      if (!parsed.ok) return parsed.error;
       const { key, relation } = parsed.data;
       const params = new URLSearchParams({ key });
       if (relation) params.set("relation", relation);

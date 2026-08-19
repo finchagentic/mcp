@@ -4,6 +4,7 @@ import { callConvex } from "../convex.js";
 import { getOrCreateWallet, signAndBroadcast, waitForReceipt } from "../wallet.js";
 import { ToolResult } from "../types.js";
 import { decimalsFor } from "../token-decimals.js";
+import { parseOrError } from "../_zod-helpers.js";
 
 export const DEFI_TOOLS: Tool[] = [
   {
@@ -230,8 +231,8 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
     // registers the name "analyze_wallet" for the MCP dispatcher to route to.
 
     case "get_defi_yields": {
-      const parsed = DefiYieldsSchema.safeParse(args ?? {});
-      if (!parsed.success) return { content: [{ type: "text", text: `${parsed.error.issues[0].message}` }], isError: true };
+      const parsed = parseOrError(DefiYieldsSchema, args ?? {});
+      if (!parsed.ok) return parsed.error;
 
       const { token, minApy = 1, limit = 20 } = parsed.data;
 
