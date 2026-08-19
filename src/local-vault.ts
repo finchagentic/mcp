@@ -5,18 +5,11 @@ import * as crypto from "crypto";
 import { readConfig } from "./config.js";
 import { meaningfulTerms, wordOccurrences } from "./_text-search.js";
 
-// Fully-local, user-owned Noel-Vault backend. Mirrors the two-tier pattern of
-// local-memory.ts: when the user opts in (`vaultBackend: "local"`), the vault
-// tools store versioned artifacts on the user's own disk under
-// ~/.finch/vault/ - no Finch account, no Convex, no network, no cost to
-// the platform. Zero runtime dependencies (plain JSON + one content file per
-// version), same spirit as codebase-memory-mcp's local-first SQLite store.
-//
-// Every exported function returns objects shaped like the Convex /vault/*
-// responses so tools/vault.ts can swap the data source with a one-line branch
-// and reuse all of its existing rendering. Not-found cases THROW an Error whose
-// message contains "not found", matching how callConvex surfaces a 404 (the
-// vault handlers already catch and format that).
+// Fully-local, user-owned vault backend (`vaultBackend: "local"`) - versioned
+// artifacts on disk under ~/.finch/vault/, no account/Convex/network. Every
+// export returns Convex /vault/*-shaped objects so tools/vault.ts can swap
+// data source with a one-line branch. Not-found throws an Error containing
+// "not found", matching callConvex's own 404 format.
 
 const VAULT_DIR = path.join(os.homedir(), ".finch", "vault");
 

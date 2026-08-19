@@ -1,17 +1,7 @@
-// Insider transactions from SEC Form 4 — parsed from the filings themselves.
-//
-// Two accuracy traps make naive versions of this actively misleading, and both
-// are handled here:
-//
-//  1. A company's filing feed contains Form 4s where that company is the
-//     REPORTING OWNER of a stake in some other issuer. Those are not insider
-//     trades in the ticker you asked about, so every filing is checked against
-//     `issuerTradingSymbol` before it counts.
-//
-//  2. Most "insider selling" is transaction code F — shares withheld to cover
-//     tax on vesting RSUs. It is automatic, not a decision, and carries no
-//     signal. Only P (open-market purchase) and S (open-market sale) reflect a
-//     choice, so they are reported separately from everything else.
+// Insider transactions from SEC Form 4. Two traps handled: (1) filings
+// where the company is REPORTING OWNER of another issuer are filtered via
+// `issuerTradingSymbol`; (2) code F (tax withholding on RSU vests, no real
+// signal) is separated from P/S (actual buy/sell decisions).
 
 import { z } from "zod";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";

@@ -596,18 +596,9 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       // dedupes even before supermemory has indexed the first one.
       if (!sourceUrl) rememberRecentHash(hash, data?.id ?? "saved", title);
 
-      // ─── Conflict hint (not a proof) ──────────────────────────────────
-      // Finch never runs its own LLM call to judge this - "two-pass, no API
-      // key needed" is deliberate (see this file's header comment), and an
-      // autonomous contradiction call would break that. Instead this just
-      // resurfaces whatever memory_search's own retrieval already ranks as
-      // related to the content just saved, so the CALLING model - already
-      // reasoning about this exact save, in the same turn, no extra API
-      // cost - can judge for itself whether the two actually conflict and
-      // decide what to do (mark the old one superseded, fold both into
-      // memory_consolidate, or just note the new one is the current one).
-      // Best-effort: a search hiccup here must never fail or block the save
-      // that already succeeded above.
+      // Conflict hint, not a proof - no LLM call server-side (two-pass, no
+      // API key). Resurfaces related existing memories so the calling
+      // model decides. Best-effort, must never block the save above.
       let conflictNote = "";
       try {
         const related = await hybridMemorySearch(content, 8);
@@ -1097,22 +1088,10 @@ export async function handleMemoryTool(name: string, args: unknown): Promise<Too
       };
     }
 
-    // memory_publish was removed - it was broken two levels deep. The tool
-    // called POST /vault/save with isPublic/authorName fields that the
-    // handler silently dropped (only type/title/content/key/contentType/
-    // agentId/tags/commitMsg/metadata are forwarded to vault.saveEntry - see
-    // app/convex/http.ts), so `published` was never actually set true; the
-    // real publishEntry mutation (POST /vault/publish) existed but this tool
-    // never called it. And even a correctly-wired publish would have done
-    // nothing observable: nothing anywhere reads the `published` field for
-    // cross-user browsing - no /vault/community route (dangling comment
-    // only, same pattern as the other removed routes), no backend query for
-    // it, no "Memory Marketplace" page in app/src. The tool asked users to
-    // accept an "IRREVERSIBLE, PUBLIC" risk for a marketplace that doesn't
-    // exist at any layer. Re-add only alongside building the actual
-    // discovery path: a community-browse query + route + UI that reads
-    // `published: true` entries. vault_unpublish is left in place - it's a
-    // correct, harmless no-op until then.
+    // memory_publish removed - broken (silently dropped isPublic/authorName,
+    // never actually set `published`) AND pointless even if fixed - no
+    // Memory Marketplace page/query ever reads that field. vault_unpublish
+    // stays, it's a harmless no-op. Re-add only alongside building discovery.
 
     default:
       return null;

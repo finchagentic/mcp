@@ -115,21 +115,9 @@ export const ALL_TOOLS = [
   ...CHRONICLE_TOOLS,    // 4 - chronicle_add, chronicle_list, chronicle_search, chronicle_stats
   ...PACKET_TOOLS,       // 4 - packet_create, packet_run, packet_list, packet_share
   ...STAKE_TOOLS,        // 5 - stake_finch_status, stake_finch, unstake_finch, claim_vested_rewards, stake_auto_restake (custodial wallet; requires `finch login`)
-  // total: 116 tools as measured by ALL_TOOLS.length - do not hand-maintain a
-  // count in this comment (drifted stale multiple times already: before
-  // staking was added, after the P1 audit removed 9 dead framework/agent-
-  // schedule tools, after memory_publish was removed for promising a
-  // marketplace that doesn't exist, after stake_auto_restake was added,
-  // after claim_vested_rewards was added to close the gap where the
-  // stake-lifecycle notification told users to "run claimVestedRewards" but
-  // no MCP tool by that name existed, after code_session_save was added so
-  // coding sessions persist the same way deep_research already auto-saves
-  // research, and after list_projects was added alongside `workspaceProject`
-  // support on vault_save/agent_spawn - MCP tools can now file into the same
-  // Projects the webapp Agents page organizes by, resolved/auto-created
-  // server-side via POST /projects/resolve; ALL_TOOLS.length is the only
-  // number that can't lie). Per-category counts above are best-effort
-  // documentation, not load-bearing anywhere.
+  // Total tool count: use ALL_TOOLS.length, not a hardcoded number here -
+  // this comment has drifted stale repeatedly. Per-category counts above
+  // are best-effort docs, not load-bearing.
 ];
 
 // Build O(1) dispatch map at startup - avoids sequential chained awaits per call

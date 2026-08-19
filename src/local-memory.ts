@@ -5,18 +5,12 @@ import {
   type LocalMemoryFileConfig,
 } from "./local-memory-file.js";
 
-// Two self-hosted memory backends, dispatched from one place so every caller
-// in tools/memory.ts, tools/vault.ts, tools/os.ts and cli.ts keeps calling
-// the same five functions regardless of which one the user picked:
-//
-//   memoryBackend: "local-file" - zero-dependency, JSON on disk under
-//     ~/.finch/memory/ (local-memory-file.ts). No server, no key. Default
-//     recommendation - this is what "self-hosted memory" should mean.
-//   memoryBackend: "local"      - client for a separately-run, self-hosted
-//     supermemory server (github.com/supermemoryai/supermemory) on
-//     localhost. Real semantic/embedding search, but the user has to
-//     install and run that server themselves. Kept for anyone already on it.
-//   unset / "convex"            - hosted, hits Finch's own /memory/* routes.
+// Dispatcher for two self-hosted memory backends, one set of functions
+// regardless of which the user picked:
+//   "local-file" - zero-dependency JSON on disk, no server/key. Default.
+//   "local"      - client for a separately self-hosted supermemory server
+//                  (real embeddings, but the user runs that server).
+//   unset        - hosted, Finch's own /memory/* routes.
 
 export interface SupermemoryConfig {
   kind: "supermemory";

@@ -1,17 +1,8 @@
-// Static heuristic scanner for Solidity audit grounding.
-//
-// The LLM-only audit path was dangerous: a model could say "this contract
-// looks safe" without any structural basis, and a user might trust that
-// claim with real funds. This module runs a regex/pattern scan over the
-// source BEFORE the LLM call and forces the LLM to address each finding
-// (either confirm the risk or explain why it's a false positive). The
-// resulting report leads with "automated static checks", then "LLM review
-// over those findings", then a mandatory disclaimer.
-//
-// This is NOT a substitute for a professional audit. It catches obvious
-// antipatterns. Subtle vulnerabilities (reentrancy guarded by state ordering,
-// signature replay, oracle manipulation under non-obvious conditions) still
-// need human review or specialized tooling (Slither, Mythril, Echidna).
+// Static heuristic scanner for Solidity audit grounding - runs a
+// regex/pattern scan before the LLM call and forces it to address each
+// finding, instead of letting it claim "looks safe" with no structural
+// basis. Not a substitute for a professional audit (Slither/Mythril/
+// Echidna) - catches obvious antipatterns only.
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 

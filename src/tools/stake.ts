@@ -5,27 +5,14 @@ import { callConvex } from "../convex.js";
 import { getSavedToken } from "../config.js";
 import { rhProviderAsync, RH_EXPLORER } from "./rh-mcp.js";
 
-// FINCH staking - MCP wrapper around the EXISTING app/convex staking actions
-// (stake.ts's stakeFINCH/unstakeFINCH, stakeInternal.ts's myStakingStats/
-// globalStats). No staking logic lives here - this only parses a
-// human-friendly amount ("all", "max", "50%", "1m", "100k", a raw number)
-// into wei and calls the backend, exactly like the webapp's Stake page does.
+// FINCH staking - MCP wrapper around the existing app/convex staking
+// actions. Parses a human amount ("all", "50%", "1m") into wei and calls
+// the backend.
 //
-// IMPORTANT - custodial wallet, not the local signing wallet: unlike
-// base_mcp_swap/rh_mcp_swap (which sign and broadcast with the LOCAL
-// ~/.finch/wallet.json key and need no login), staking moves FINCH from the
-// account's CUSTODIAL wallet (the one shown on the webapp's Wallet page) -
-// stake.ts's actions resolve identity via a real logged-in session, not a
-// wallet signature. Requires `finch login` first; there is no way around
-// this without changing stake.ts's own session-based design, which is out
-// of scope here. The local wallet and the custodial wallet are DIFFERENT
-// addresses with different balances - never conflate them in output.
-//
-// SECURITY: no tool here ever returns a private key or seed phrase, and
-// none ever will - the custodial key stays server-side (Turnkey-enclave /
-// encrypted-at-rest), exactly as it already does for the webapp. "Log in,
-// then stake" is the ceiling of what this integration does; it does not,
-// and must not, add an export path.
+// Uses the CUSTODIAL wallet (session-based, requires `finch login`), not
+// the local signing wallet base_mcp_swap/rh_mcp_swap use - different
+// address, different balance, never conflate. No tool here ever returns a
+// private key or seed phrase; the custodial key stays server-side.
 
 const FINCH_CA = "0xce1981b0431fb495912cab057d2877a290199824";
 const FINCH_DECIMALS = 18;

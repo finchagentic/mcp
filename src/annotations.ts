@@ -1,30 +1,12 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { OUTPUT_SCHEMAS } from "./output-schemas.js";
 
-// MCP tool annotations (spec 2025-06-18). These are behavioural HINTS, not
-// guarantees - clients use them to decide auto-approval, confirmation prompts
-// and how a tool is presented:
-//   readOnlyHint    - the tool does not modify any state. A client may run it
-//                     without asking. NEVER set this true for a tool that can
-//                     write, delete, move funds or otherwise act.
-//   destructiveHint - the tool may perform an irreversible/destructive update
-//                     (delete, cancel, publish-forever, move money). Only
-//                     meaningful when readOnlyHint is false.
-//   idempotentHint  - calling again with the same args adds no further effect
-//                     (a toggle/upsert). Only meaningful when readOnlyHint is
-//                     false.
-//   openWorldHint   - the tool interacts with external entities (our backend,
-//                     a chain, an LLM, the web) rather than a closed local set.
-//
-// Design: the DEFAULT for any tool not named below is read-only + open-world,
-// because the overwhelming majority of finch tools are reads that hit the
-// backend / a chain / an LLM. Only mutating tools opt out. Deletes, cancels and
-// anything that moves money or publishes irreversibly are flagged destructive
-// so a client prompts before running them.
-//
-// A single injection point (withAnnotations, applied in the tools/list handler)
-// keeps this classification in one reviewable file instead of scattered across
-// 25 tool modules. Any tool that ships its own `annotations` is left untouched.
+// MCP tool annotation hints (spec 2025-06-18): readOnlyHint (no state
+// change), destructiveHint (irreversible - delete/cancel/move funds),
+// idempotentHint (safe to re-run with same args), openWorldHint (touches an
+// external system). Default here is read-only + open-world; mutating tools
+// opt out below. Single injection point (withAnnotations) instead of
+// scattering this across 25 tool files.
 
 type Ann = NonNullable<Tool["annotations"]>;
 

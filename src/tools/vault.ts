@@ -696,17 +696,9 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
       const parsed = parseOrError(SearchSchema, args);
       if (!parsed.ok) return parsed.error;
 
-      // Full-text search, proxied through Convex (searchSupermemory is a
-      // legacy name - it calls Finch's own /memory/search endpoint, not a
-      // third-party semantic service; there is no embedding step here). Large vault
-      // entries are indexed as multiple chunks tagged with isVaultChunk +
-      // vaultKey - group chunks back to their parent entry so the result
-      // list shows one row per entry, not one row per chunk.
-      //
-      // Skipped entirely when vaultBackend is local - a local vault's whole
-      // point is "no network," so the query string must never leave the
-      // machine, not even to check for results before falling back to the
-      // (always-local) full-text branch below.
+      // Full-text search via Convex (no embeddings). Large entries are
+      // chunked (isVaultChunk/vaultKey) - grouped back to one row per entry.
+      // Skipped entirely in local-vault mode - query must never leave the machine.
       if (!localVault) {
         const limit = parsed.data.limit ?? 20;
         // Over-fetch so that after chunk dedup we still have ~limit rows.

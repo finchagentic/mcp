@@ -1,21 +1,8 @@
-// Generalized enrichment router for deep_research synthesis.
-//
-// Old behavior: Firecrawl scraped 5–10 pages and the LLM synthesized. When
-// pages were thin or outdated, the LLM filled gaps with plausible fiction.
-//
-// New behavior: detect the topic domain and hit primary-source APIs in
-// parallel before synthesis. Inject results as "AUTHORITATIVE LIVE DATA"
-// the LLM is instructed to lead with.
-//
-// All APIs used here are free, public, no auth required:
-//   - DefiLlama, CoinGecko (crypto)
-//   - HackerNews Algolia (tech news, ~real-time)
-//   - GitHub search (repos, no auth needed for public read)
-//   - arXiv (academic papers)
-//   - Wikipedia REST (foundational facts)
-//
-// All calls are best-effort with short timeouts - if any fail, the
-// synthesis runs without that block.
+// Enrichment router for deep_research synthesis - detects topic domain and
+// hits free primary-source APIs in parallel (DefiLlama/CoinGecko, HN
+// Algolia, GitHub search, arXiv, Wikipedia), injected as "AUTHORITATIVE
+// LIVE DATA" so the LLM leads with real data instead of filling thin
+// scraped pages with plausible fiction. Best-effort, short timeouts.
 
 export type EnrichmentBlock = {
   context: string;

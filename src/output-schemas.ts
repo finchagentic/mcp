@@ -1,16 +1,7 @@
 // Central registry of MCP tool `outputSchema` declarations (spec 2025-06-18).
-//
-// A tool that declares an outputSchema SHOULD also return `structuredContent`
-// conforming to it (its handler does; the human-readable `content` text stays
-// for backward compatibility). Keeping every schema in one file - rather than
-// inline on each tool definition across ~25 modules - makes the machine-readable
-// surface reviewable in one place, mirrors how annotations.ts centralises
-// behavioural hints, and lets a new tool opt in by adding one entry here plus a
-// structuredContent return in its handler (no tool-definition edit needed).
-//
-// Attached to the listed tools by withAnnotations() (annotations.ts) at
-// tools/list time. Only tools whose handler genuinely emits matching
-// structuredContent belong here.
+// One file instead of inline per tool (mirrors annotations.ts). Attached by
+// withAnnotations() at tools/list time - only tools whose handler actually
+// emits matching structuredContent belong here.
 
 type JSONSchema = Record<string, unknown>;
 

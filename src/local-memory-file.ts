@@ -4,18 +4,11 @@ import * as path from "path";
 import * as crypto from "crypto";
 import { meaningfulTerms, wordOccurrences } from "./_text-search.js";
 
-// Fully-local, user-owned memory backend - the memory-side counterpart to
-// local-vault.ts. Stores every memory as one row in a single JSON index under
-// ~/.finch/memory/ - no server to install, no API key, no network. This is
-// what "self-hosted memory" should have meant from the start: the previous
-// local option (local-memory.ts's supermemory client) only worked if the user
-// separately installed and ran github.com/supermemoryai/supermemory
-// themselves, which isn't "install the plugin and just talk to it".
-//
-// Search here is substring/keyword scoring (same technique local-vault.ts
-// uses for its own search) - not real embeddings. That's an honest tradeoff
-// for zero-dependency: true semantic recall needs an embedding model call,
-// which needs a key. Good enough for "what did I say about X" style recall.
+// Fully-local, user-owned memory backend (local-vault.ts's counterpart) -
+// one JSON index under ~/.finch/memory/, no server/key/network. Zero-setup
+// alternative to local-memory.ts's supermemory client (which requires
+// self-hosting that server separately). Keyword scoring, not embeddings -
+// good enough for "what did I say about X", zero-dependency tradeoff.
 
 export interface LocalMemoryFileConfig {
   dir: string;

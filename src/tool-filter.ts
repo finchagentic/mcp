@@ -1,19 +1,10 @@
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 
-// Tool-subset filter. Each user keeps the full handler map (so any tool
-// can still be invoked by name if explicitly referenced), but the LIST
-// response sent to MCP clients is trimmed based on FINCH_TOOLS.
+// Tool-subset filter. Full handler map stays intact (any tool can still be
+// invoked by name); only the LIST response sent to clients is trimmed by
+// FINCH_TOOLS, to cut LLM context cost. Default = "core".
 //
-// Default = "core" - runtime essentials only (memory, vault, agents,
-// chronicle, status). Opt-in presets let token-conscious users cut LLM
-// context cost while keeping the full surface accessible by name:
-//
-//   FINCH_TOOLS=core         runtime essentials (memory, vault, agents)
-//   FINCH_TOOLS=defi         Base + market + DeFi execution
-//   FINCH_TOOLS=research     research + memory + vault
-//   FINCH_TOOLS=memory       memory + vault + agents only
-//   FINCH_TOOLS=memory,defi  comma-separated combination
-//   FINCH_TOOLS=all          every registered tool
+//   FINCH_TOOLS=core|defi|research|memory|all, or comma-separated
 //
 // Unknown presets fall back to all to avoid silently hiding tools.
 

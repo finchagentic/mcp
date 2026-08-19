@@ -112,23 +112,10 @@ function withAgentLock<T>(agentName: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
-// list_agents/hire_agent were removed (not disabled - deleted) because their
-// backend routes, /agents/list and /agents/hire, were never actually
-// registered in app/convex/http.ts - only dangling section-header comments
-// exist there, no matching http.route(...) call. Every call to either tool
-// always 404'd. Re-add them (and the matching handler blocks below) only
-// alongside building those two routes for real.
-//
-// Same story, same fix, applied again here: agent_identity, agent_schedule,
-// agent_unschedule, agent_pause, agent_resume and agent_runs called
-// /agents/identity, /agents/schedule, /agents/unschedule, /agents/pause and
-// /agents/runs - none of which exist in http.ts, and none of which have any
-// backing data model in schema.ts (no agent-identity table, no scheduler,
-// no run-history table; there isn't even a cron for it in crons.ts). This
-// isn't a missing route, it's an unbuilt subsystem, so the tools were
-// removed rather than stubbed. Re-add only alongside building that
-// autonomous-scheduling backend for real: identity/schedule storage, a cron
-// that actually wakes agents up, and run-history writes.
+// list_agents/hire_agent/agent_identity/agent_schedule/agent_unschedule/
+// agent_pause/agent_resume/agent_runs deleted - their backend routes never
+// existed (dangling comments in http.ts, no actual route/data model). Not a
+// missing route, an unbuilt subsystem. Re-add only alongside building it.
 export const AGENT_TOOLS: Tool[] = [
   {
     name: "agent_spawn",
