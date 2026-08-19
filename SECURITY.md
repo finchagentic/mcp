@@ -11,8 +11,8 @@ Security updates are applied to the latest published version of
 
 | Version | Supported          |
 |---------|--------------------|
-| 3.29.x  | :white_check_mark: |
-| < 3.29  | :x:                |
+| 4.x     | :white_check_mark: |
+| < 4.0   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -66,9 +66,12 @@ The following protections are in place across the stack:
 
 ### Cryptography & secrets
 
-- **AES-256-CBC** encryption for custodial wallet private keys at rest. Keys are
+- **AES-256-GCM** (authenticated encryption, per-record salt via scrypt) for
+  custodial wallet private keys at rest — the current `v2:` format. Keys are
   encrypted with `WALLET_ENCRYPTION_KEY` before storage and decrypted only
-  inside `"use node"` Convex actions at signing time.
+  inside `"use node"` Convex actions at signing time. Legacy `v1:` records
+  (plain AES-256-CBC, no per-record salt) still decrypt for backward
+  compatibility and are migrated to `v2:` via `walletActions:reencryptWalletKeys`.
 - **Session tokens** — auth (Privy OAuth, email OTP, and API key) ultimately
   produces a 64-character hex session token. Tokens are validated server-side
   via `checkMcpAuth()` on every HTTP route.
