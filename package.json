@@ -52,7 +52,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "ethers": "^6.17.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
