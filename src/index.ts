@@ -20,7 +20,7 @@ const PKG_VERSION: string = (() => {
   }
 })();
 
-const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
+const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://valuable-fish-533.convex.site";
 
 // ── ANSI helpers ──────────────────────────────────────────────────────────────
 const C = {

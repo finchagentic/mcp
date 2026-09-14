@@ -2,7 +2,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
 import { getSavedToken } from "../config.js";
 
-const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
+const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://valuable-fish-533.convex.site";
 
 export const MIROSHARK_TOOLS: Tool[] = [
   {

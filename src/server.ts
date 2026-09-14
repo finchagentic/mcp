@@ -15,6 +15,8 @@ import { listVaultResources, readVaultResource } from "./resources.js";
 import { listPrompts, getPrompt } from "./prompts.js";
 import { filterTools } from "./tool-filter.js";
 import { withAnnotations } from "./annotations.js";
+import { FINCH_STATUS_TOOL, handleFinchStatus } from "./finch-status.js";
+import { processResponse } from "./finch-output.js";
 
 // Read version from package.json so the server announces the same version
 // MCP clients see in the npm tarball. Falls back to "unknown" if the file
@@ -118,6 +120,7 @@ export const ALL_TOOLS = [
   // Total tool count: use ALL_TOOLS.length, not a hardcoded number here -
   // this comment has drifted stale repeatedly. Per-category counts above
   // are best-effort docs, not load-bearing.
+  FINCH_STATUS_TOOL,     // 1 - finch_status now lives in finch-status.ts, not OS_TOOLS - see that file's header for why
 ];
 
 // Build O(1) dispatch map at startup - avoids sequential chained awaits per call
@@ -152,6 +155,7 @@ export const HANDLER_MAP = new Map<string, Handler>([
   ...CHRONICLE_TOOLS.map(t   => [t.name, (n: string, a: unknown) => handleChronicle(n, a as Record<string, unknown>)] as [string, Handler]),
   ...PACKET_TOOLS.map(t      => [t.name, (n: string, a: unknown) => handlePacket(n, a as Record<string, unknown>)] as [string, Handler]),
   ...STAKE_TOOLS.map(t       => [t.name, handleStakeTool]       as [string, Handler]),
+  [FINCH_STATUS_TOOL.name, ((_name: string, _args: unknown) => handleFinchStatus(ALL_TOOLS.length)) as Handler],
 ]);
 
 // `instructions` is returned in the initialize result - it tells the client
@@ -265,8 +269,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
-    const result = await handler(name, args);
-    if (result) return result;
+    // Hard timeout guard: a hung tool must never wedge the client session.
+    // 180s covers deep_research's multi-stage pipeline with margin.
+    const HARD_TIMEOUT_MS = 180_000;
+    let timer: NodeJS.Timeout;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(
+        `Tool timed out after 180s (${name}). The operation may still complete server-side - check the app before re-running.`
+      )), HARD_TIMEOUT_MS);
+    });
+    const result = await Promise.race([handler(name, args), timeoutPromise]);
+    clearTimeout(timer!);
+    if (result) return processResponse(result) ?? result;
     return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
   } catch (err: any) {
     if (err instanceof PaymentRequiredError) {

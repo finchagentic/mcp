@@ -26,7 +26,7 @@ export const CORE_TOOL_COUNT = (() => {
   }
 })();
 
-export const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://befitting-porcupine-276.convex.site";
+export const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://valuable-fish-533.convex.site";
 
 export const PKG_VERSION: string = (() => {
   try {

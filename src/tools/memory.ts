@@ -164,6 +164,18 @@ export async function syncToSupermemory(
   });
 }
 
+// A real auth failure must never be reported as "0 results found" - that
+// reads as "your account genuinely has nothing saved" when the actual
+// problem is the token/key was rejected. Only genuinely transient errors
+// (network hiccup, the other RRF side still succeeding) degrade silently
+// to an empty contribution - an auth failure is rethrown so it reaches the
+// user instead of being swallowed. Found live: memory_search/memory_context/
+// memory_insight/memory_consolidate all share this retrieval path, so a
+// single fix here closes the same bug across all four tools.
+function isAuthFailure(err: unknown): boolean {
+  return err instanceof Error && /Authentication required/i.test(err.message);
+}
+
 export async function searchSupermemory(
   query: string,
   limit = 10,
@@ -173,7 +185,8 @@ export async function searchSupermemory(
     if (local) return await localMemorySearch(local, query, limit);
     const data = await callConvex("/memory/search", "POST", { q: query, n: limit }, "memory_search");
     return data?.results ?? [];
-  } catch {
+  } catch (err) {
+    if (isAuthFailure(err)) throw err;
     return [];
   }
 }
@@ -194,7 +207,8 @@ async function lexicalSearch(
       metadata: r.metadata ?? {},
       rank:     typeof r.rank === "number" ? r.rank : idx,
     }));
-  } catch {
+  } catch (err) {
+    if (isAuthFailure(err)) throw err;
     return [];
   }
 }

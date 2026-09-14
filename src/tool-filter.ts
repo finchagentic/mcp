@@ -29,7 +29,9 @@ export function filterTools(allTools: Tool[]): Tool[] {
   // Default is "core" - keeps LLM context cost low while everything
   // is still callable by name. Power users opt back in via
   // FINCH_TOOLS=all. Explicit empty env still means "all" for back-compat.
-  const raw = (process.env.FINCH_TOOLS ?? "core").trim().toLowerCase();
+  // FINCH_PRESET is the friendly alias (single preset name only); FINCH_TOOLS
+  // stays the power-user env (comma-separated combos + all).
+  const raw = (process.env.FINCH_TOOLS ?? process.env.FINCH_PRESET ?? "core").trim().toLowerCase();
   const env = raw === "" ? "core" : raw;
   if (env === "all") return allTools;
 
