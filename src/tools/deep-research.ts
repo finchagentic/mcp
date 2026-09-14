@@ -6,12 +6,12 @@
 // import needs no change.
 
 import { ToolResult } from "../types.js";
-import { callLLM, isGrokActive, hasDirectLLMKey, grokLiveSearchHits, type LiveSearchOptions, type LiveSearchSource } from "../llm.js";
+import { isGrokActive, hasDirectLLMKey, grokLiveSearchHits, type LiveSearchOptions, type LiveSearchSource } from "../llm.js";
 import { callConvex } from "../convex.js";
 import { checkSignal } from "../signal-gate.js";
 
 import { MAX_PER_DOMAIN, FRESH_TRIGGER_RE } from "./deep-research-constants.js";
-import { DEEP_RESEARCH_TOOLS, InputSchema } from "./deep-research-tools.js";
+import { InputSchema } from "./deep-research-tools.js";
 import {
   extractQueryTerms,
   domainOf,
