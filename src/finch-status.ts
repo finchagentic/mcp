@@ -34,31 +34,48 @@ export const FINCH_STATUS_TOOL: Tool = {
 };
 
 type AuthState = "none" | "valid" | "invalid" | "rejected" | "unreachable";
+type CredentialKind = "session token" | "API key";
+
+// Mirrors convex.ts's own precedence exactly (explicit env var of either
+// kind beats a cached ~/.finch/config.json sessionToken from a past `finch
+// login`) - this tool previously only checked getSavedToken(), which never
+// considered FINCH_API_KEY at all. A user who configured FINCH_API_KEY
+// fresh (the documented way to authenticate) but still had a stale cached
+// session token file from months ago got told "not set" and pointed at
+// sign-in instructions, when a perfectly valid credential was right there.
+function resolveCredential(): { value: string; kind: CredentialKind } | null {
+  if (process.env.FINCH_SESSION_TOKEN) return { value: process.env.FINCH_SESSION_TOKEN, kind: "session token" };
+  if (process.env.FINCH_API_KEY) return { value: process.env.FINCH_API_KEY, kind: "API key" };
+  let cached: string | undefined;
+  try {
+    cached = getSavedToken();
+  } catch {
+    cached = undefined;
+  }
+  return cached ? { value: cached, kind: "session token" } : null;
+}
 
 export async function handleFinchStatus(toolCount: number): Promise<ToolResult> {
   const version = readPkgVersion();
 
-  let tokenSet = false;
+  const credential = resolveCredential();
+  const tokenSet = credential !== null;
+  const credentialLabel: CredentialKind = credential?.kind ?? "session token";
   let authState: AuthState = "none";
   let authDetail = "";
-  try {
-    tokenSet = Boolean(getSavedToken());
-  } catch {
-    tokenSet = false;
-  }
 
   if (tokenSet) {
     try {
       const data = await callConvex("/memory/profile", "GET", undefined, "finch_status", 8000, true);
       authState = (data?.status === "ok") ? "valid" : "rejected";
       if (authState === "rejected") {
-        authDetail = "the session token was rejected by the backend - re-copy it from app.finchagentic.com";
+        authDetail = `the ${credentialLabel} was rejected by the backend - re-copy it from app.finchagentic.com`;
       }
     } catch (err) {
       const msg = String((err as Error)?.message ?? err);
       if (msg.includes("Authentication required")) {
         authState = "invalid";
-        authDetail = "the backend rejected the token as expired or invalid - re-copy it from app.finchagentic.com";
+        authDetail = `the backend rejected the ${credentialLabel} as expired or invalid - re-copy it from app.finchagentic.com`;
       } else {
         authState = "unreachable";
         authDetail = msg.slice(0, 120);
@@ -85,7 +102,7 @@ export async function handleFinchStatus(toolCount: number): Promise<ToolResult> 
       ? [
           `**Finch MCP v${version}** - runtime layer for agentic AI`,
           "",
-          "- Session token: ✅ valid (verified against the backend)",
+          `- Auth: ✅ ${credentialLabel} valid (verified against the backend)`,
           `- Tools: **${toolCount}** registered (surface depends on FINCH_TOOLS filter)`,
           "- Resources: finch://vault/<key> - Prompts: crypto-thesis and friends",
           "- Tool presets: FINCH_PRESET=core|defi|research|memory (default core) - FINCH_TOOLS=all for everything",
@@ -96,16 +113,16 @@ export async function handleFinchStatus(toolCount: number): Promise<ToolResult> 
       ? [
           `**Finch MCP v${version}** - runtime layer for agentic AI`,
           "",
-          `- Session token: ⚠️ configured but **${authState}**`,
+          `- Auth: ⚠️ ${credentialLabel} configured but **${authState}**`,
           authDetail ? `- ${authDetail}` : "",
-          "- Tools are registered, but every backend-backed call will fail until the token is replaced.",
+          "- Tools are registered, but every backend-backed call will fail until it's replaced.",
           "",
-          "**Fix:** re-copy a fresh token from app.finchagentic.com, update FINCH_SESSION_TOKEN in your MCP config, restart the client.",
+          `**Fix:** re-copy a fresh ${credentialLabel} from app.finchagentic.com, update ${credentialLabel === "API key" ? "FINCH_API_KEY" : "FINCH_SESSION_TOKEN"} in your MCP config, restart the client.`,
         ]
       : [
           `**Finch MCP v${version}** - runtime layer for agentic AI`,
           "",
-          "- Session token: ❌ not set",
+          "- Auth: ❌ not set",
           "",
           "**To sign in (60 seconds):**",
           "",
