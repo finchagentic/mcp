@@ -72,8 +72,9 @@ export function writeConfig(patch: Partial<FinchConfig>): void {
 }
 
 export function getSavedToken(): string | undefined {
-  // env var always wins over saved config
-  return env("FINCH_SESSION_TOKEN", "FINCH_SESSION_TOKEN") ?? readConfig().sessionToken;
+  // FINCH_API_KEY (persistent finch_sk_* key) wins - MCP clients should hold
+  // a key, not a session token that expires and silently disconnects them.
+  return process.env.FINCH_API_KEY ?? env("FINCH_SESSION_TOKEN", "FINCH_SESSION_TOKEN") ?? readConfig().sessionToken;
 }
 
 /** Accept finch_sk_* (new) and noel_sk_* (backend still issues these). */

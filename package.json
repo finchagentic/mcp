@@ -1,6 +1,6 @@
 {
   "name": "@finchagentic/mcp",
-  "version": "4.7.2",
+  "version": "4.7.3",
   "description": "The runtime layer for Agentic AI. Persistent memory, autonomous agents, and workflows that survive every session.",
   "main": "dist/index.js",
   "bin": {
