@@ -20,7 +20,7 @@ import { handleWalletTool } from "./wallet.js";
 
 import { RH_CHAIN_ID, RH_EXPLORER, RH_STOCKS, RH_PERMIT2, rhRpcDisplay } from "./rh-mcp-constants.js";
 import { dexTokenBest, dexSearchByTicker, badQuoteWarning, quoteValueRatio } from "./rh-mcp-dex.js";
-import { rhRpc, rhErc20Balance, rhPriceUsd, rhProviderAsync, formatWei } from "./rh-mcp-provider.js";
+import { rhRpc, formatWei } from "./rh-mcp-provider.js";
 import { isAddress, resolveTokenSmart, fetchRhBalances } from "./rh-mcp-resolve.js";
 import {
   assessRisk,

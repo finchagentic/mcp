@@ -43,13 +43,24 @@ export async function callConvex(
   const url = `${CONVEX_SITE}${path}`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
-  const apiKey      = process.env.FINCH_API_KEY;
-  const sessionToken = getSavedToken(); // env var → saved config fallback
-  // Prefer session token (resolved by backend) over API key for Convex API calls
-  const authHeader  = sessionToken
-    ? `Bearer ${sessionToken}`
+  const apiKey = process.env.FINCH_API_KEY;
+  // getSavedToken() falls back to ~/.finch/config.json's cached sessionToken
+  // (written by a past `finch login`) when FINCH_SESSION_TOKEN isn't set.
+  // That cached value can go stale for months without anyone noticing - a
+  // user who later configures FINCH_API_KEY fresh in their MCP client
+  // (the documented, intentional way to authenticate) got it silently
+  // shadowed by the old cached token, which then failed on every call. An
+  // EXPLICIT env var - either kind, set deliberately for this run - always
+  // wins over a cached file value; only fall back to the cached session
+  // token when neither env var is present.
+  const explicitSessionToken = process.env.FINCH_SESSION_TOKEN;
+  const cachedSessionToken = explicitSessionToken ? undefined : getSavedToken();
+  const authHeader = explicitSessionToken
+    ? `Bearer ${explicitSessionToken}`
     : apiKey
     ? `Bearer ${apiKey}`
+    : cachedSessionToken
+    ? `Bearer ${cachedSessionToken}`
     : null;
   if (authHeader) {
     headers["Authorization"] = authHeader;
