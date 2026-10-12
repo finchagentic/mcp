@@ -107,7 +107,7 @@ save this thesis to vault
 | **Memory** | Full-text searchable memory + versioned vault + chronicle |
 | **Agents** | Spawn, recall, update named agents — `agent_recall` also pulls related memory/vault context matching the agent's goal, not just its own logged updates |
 | **Workflows** | Automations, monitors, packets, deep research (auto-saves reports + auto-links related past research) |
-| **Execution** | Base DeFi, Robinhood Chain, market data, web, GitHub |
+| **Execution** | Base DeFi, Robinhood Chain, Solana (Jupiter swaps, SPL sends, pump.fun launches), market data, web, GitHub |
 
 Coding and research sessions persist the same way: `deep_research` auto-saves its report to vault and links it to related past reports; `code_session_save` does the same for coding/debugging sessions (`vault_save type=code`, versioned per project, auto-linked). Both exist so the next session — yours or another agent's — starts with real context instead of cold.
 
@@ -137,6 +137,20 @@ npx -y -p @finchagentic/mcp@4.7.5 finch setup
 
 Scheduled/cloud features still need an account. Core memory, vault, and public-data tools work offline of Finch cloud.
 
+## Solana tools (`sol_*`, in the `defi` palette)
+
+| Tool | What it does |
+|------|--------------|
+| `sol_wallet` | Public address of the local Solana wallet (`~/.finch/solana-wallet.json`, mode 600, AES-256-GCM; created on first use; secret never returned) |
+| `sol_balance` | SOL + SPL balances (Token and Token-2022). Defaults to the local wallet |
+| `sol_token_info` | Name/symbol/decimals/price/liquidity/mcap via Jupiter + DexScreener |
+| `sol_quote` | Jupiter quote (exact BigInt amounts; `SOL`/`USDC`/`USDT`/`FINCH` symbols) |
+| `sol_swap` | Jupiter swap, signed locally. Estimate only unless `confirmed: true`; rejects price impact > 5% |
+| `sol_send` | Send SOL or an SPL token. Preview unless `confirmed: true` |
+| `sol_launch_token` | pump.fun launch (image + metadata upload, optional dev buy). Preview unless `confirmed: true`; needs `devBuySol + 0.03` SOL |
+
+Set `FINCH_SOLANA_RPC_URL` for a private RPC (the URL/key is never echoed in tool output). `$FINCH` on Solana: `4LKS9yUYaBEZyzsaExmFXcWbG9pDBX7AWhseigVYpump`. See [docs/solana.md](docs/solana.md).
+
 ## Configuration
 
 | Variable | Purpose |
@@ -150,6 +164,7 @@ Scheduled/cloud features still need an account. Core memory, vault, and public-d
 | `FIRECRAWL_API_KEY` | Better crawl quality (optional) |
 | `GITHUB_TOKEN` | For `github_search_code` |
 | `ALCHEMY_API_KEY` | Faster Base RPC (optional) |
+| `FINCH_SOLANA_RPC_URL` | Solana RPC for `sol_*` tools (default `https://api.mainnet-beta.solana.com`) |
 
 **Cost model:** almost everything is free to run — the other 110 tools are plain API/RPC calls, and your MCP client's own model (Claude, GPT, whatever's driving the chat) does all the tool-selection reasoning at no cost to Finch. The 5 exceptions above need their own key because their reasoning happens *inside* the tool call, invisible to your client, and can't be delegated to it. Set exactly one of the four env vars and every tool that needs it will use it automatically.
 
@@ -169,7 +184,7 @@ npx -y -p @finchagentic/mcp@4.7.5 finch setup
 | 4 | Credential vault | Never paste secrets into prompts or third-party tools |
 | 5 | Data disclosure | Know what leaves the machine (LLM, Firecrawl, GitHub, chain RPCs) |
 | 6 | Server monitors | Scheduled jobs need explicit confirmation |
-| 7 | Fund-moving confirm | `stake_finch`/`unstake_finch`/`base_mcp_send`/`base_mcp_swap`/`rh_mcp_swap` all require `confirm: true` |
+| 7 | Fund-moving confirm | `stake_finch`/`unstake_finch`/`base_mcp_send`/`base_mcp_swap`/`rh_mcp_swap` all require `confirm: true`; `sol_swap`/`sol_send`/`sol_launch_token` require `confirmed: true` (swap also rejects >5% price impact) |
 | 8 | Local wallet encryption | Set `FINCH_WALLET_PASSPHRASE` for a portable, passphrase-derived key — without it, the key derives from a random per-install secret + machine info, so the wallet file alone (without that secret file) isn't enough to decrypt it |
 
 ## Troubleshooting

@@ -18,6 +18,18 @@ All notable changes to **@finchagentic/mcp** are documented in this file.
 
 ## [Unreleased]
 
+## [4.8.0] — 2026-10-12
+
+### Added
+- **Solana support** (`src/tools/solana.ts`, 7 tools, `defi` preset): `sol_wallet`, `sol_balance`, `sol_token_info`, `sol_quote`, `sol_swap`, `sol_send`, `sol_launch_token`. Jupiter (lite-api) quotes/swaps, SPL + Token-2022 balances and transfers, pump.fun launches via pumpportal. RPC from `FINCH_SOLANA_RPC_URL`.
+- Safety: fund-moving Solana tools do nothing without `confirmed: true`; `sol_swap` rejects >5% price impact; amounts are converted with BigInt (no floats); local Solana keypair is encrypted at rest (mode 600) and never returned or logged; RPC URLs are scrubbed from error text.
+- Dependency: `@solana/web3.js` ^1.99.
+
+### Changed (source re-synced with npm 4.7.4 / 4.7.5, which had been published without source)
+- `FINCH_API_KEY` / `FINCH_SESSION_TOKEN` env vars now always beat a stale cached `~/.finch/config.json` session token (`convex.ts`, `config.ts`); `getSavedToken()` is env-session → saved config again.
+- `finch_status` reports the credential actually in use ("API key" vs "session token") and recognises `FINCH_API_KEY`.
+- Added `mcp` bin alias (same entrypoint as `finch-mcp`).
+
 ## [4.6.1] — 2026-08-19
 
 ### Fixed

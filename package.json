@@ -1,6 +1,6 @@
 {
   "name": "@finchagentic/mcp",
-  "version": "4.7.3",
+  "version": "4.8.0",
   "description": "The runtime layer for Agentic AI. Persistent memory, autonomous agents, and workflows that survive every session.",
   "main": "dist/index.js",
   "bin": {
@@ -52,6 +52,7 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@solana/web3.js": "^1.99.0",
     "ethers": "^6.17.0",
     "zod": "^4.4.3"
   },

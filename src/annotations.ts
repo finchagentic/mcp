@@ -36,6 +36,7 @@ const WRITE = new Set<string>([
   "chronicle_add",
   "code_session_save",
   "memory_add",
+  "sol_wallet", // creates the local keypair on first use
   "memory_extract",
   "memory_consolidate",
   "packet_create",
@@ -72,6 +73,10 @@ const DESTRUCTIVE = new Set<string>([
   "wallet_sign_message",
   // money movement (Robinhood Chain)
   "rh_mcp_swap",
+  // money movement (Solana, local wallet)
+  "sol_swap",
+  "sol_send",
+  "sol_launch_token",
   "rh_dca_create", // arms recurring real buys
   "rh_bracket_create", // arms real TP/SL sells
   // a swap/send automation arms unattended, REPEATING real fund movement

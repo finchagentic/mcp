@@ -52,6 +52,7 @@ import { EVENT_TOOLS, handleEventTool } from "./tools/events.js";
 import { BASE_TOOLS, handleBaseTool } from "./tools/base.js";
 import { BASE_MCP_TOOLS, handleBaseMcpTool } from "./tools/base-mcp.js";
 import { RH_MCP_TOOLS, handleRhMcpTool } from "./tools/rh-mcp.js";
+import { SOLANA_TOOLS, handleSolanaTool } from "./tools/solana.js";
 import { RH_ORDER_TOOLS, handleRhOrderTool } from "./tools/rh-orders.js";
 import { BRIDGE_TOOLS, handleBridgeTool } from "./tools/rh-bridge.js";
 import { MEMORY_TOOLS, handleMemoryTool } from "./tools/memory.js";
@@ -103,6 +104,7 @@ export const ALL_TOOLS = [
   ...CODER_TOOLS,        // 1 - audit_contract (static Solidity scan; the client model does the reasoning)
   ...BASE_TOOLS,         // 4 - base_mcp_yield_vaults, base_mcp_lending_rates, base_mcp_deposit_guide, base_mcp_network
   ...BASE_MCP_TOOLS,     // 7 - base_mcp_{status,balance,send,swap,estimate,lend,resolve} (analyze removed v3.17.5 - dead backend route)
+  ...SOLANA_TOOLS,       // 7 - sol_{wallet,balance,token_info,quote,swap,send,launch_token} (Solana: Jupiter swaps, SPL sends, pump.fun launches)
   ...RH_MCP_TOOLS,       // 8 - rh_mcp_{status,list_stocks,balance,estimate,swap} + rh_token_resolve, rh_analyze, rh_safety_check (RH Chain 4663 Uni V4: stocks + arbitrary crypto via DexScreener/Blockscout)
   ...RH_ORDER_TOOLS,     // 5 - rh_dca_create, rh_bracket_create, rh_orders_list, rh_order_cancel, rh_orders_tick (RH automated DCA/TP/SL)
   ...BRIDGE_TOOLS,       // 1 - rh_stock_bridge (tokenized stock vs real equity)
@@ -141,6 +143,7 @@ export const HANDLER_MAP = new Map<string, Handler>([
   ...EVENT_TOOLS.map(t       => [t.name, handleEventTool]       as [string, Handler]),
   ...BASE_TOOLS.map(t        => [t.name, handleBaseTool]        as [string, Handler]),
   ...BASE_MCP_TOOLS.map(t    => [t.name, handleBaseMcpTool]    as [string, Handler]),
+  ...SOLANA_TOOLS.map(t      => [t.name, handleSolanaTool]      as [string, Handler]),
   ...RH_MCP_TOOLS.map(t      => [t.name, handleRhMcpTool]       as [string, Handler]),
   ...RH_ORDER_TOOLS.map(t    => [t.name, handleRhOrderTool]     as [string, Handler]),
   ...BRIDGE_TOOLS.map(t      => [t.name, handleBridgeTool]      as [string, Handler]),
@@ -165,12 +168,12 @@ export const HANDLER_MAP = new Map<string, Handler>([
 const SERVER_INSTRUCTIONS = [
   "Finch is the runtime layer for agentic AI: persistent memory, autonomous",
   "agents, a versioned vault, scheduled workflows, live market data, deep",
-  "research, DeFi on Base (base_mcp_*), and Robinhood Chain trading (rh_*).",
+  "research, DeFi on Base (base_mcp_*), and Robinhood Chain trading (rh_*), and Solana (sol_*).",
   "",
   "Tool annotations are set: read-only tools are safe to run without asking;",
   "tools with destructiveHint (deletes, cancels, packet_share, and anything",
   "that moves funds - base_mcp_swap/send, rh_mcp_swap, rh_dca_create,",
-  "rh_bracket_create, run_automation, packet_run, stake_finch,",
+  "sol_swap/sol_send/sol_launch_token, rh_bracket_create, run_automation, packet_run, stake_finch,",
   "unstake_finch) should be confirmed with the user before running.",
   "",
   "Vault entries are also exposed as resources (finch://vault/<key>); prefer",
