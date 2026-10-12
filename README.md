@@ -149,6 +149,8 @@ Scheduled/cloud features still need an account. Core memory, vault, and public-d
 | `sol_send` | Send SOL or an SPL token. Preview unless `confirmed: true` |
 | `sol_launch_token` | pump.fun launch (image + metadata upload, optional dev buy). Preview unless `confirmed: true`; needs `devBuySol + 0.03` SOL |
 
+**Spending is default-deny:** `sol_swap`/`sol_send`/`sol_launch_token` only execute when the operator sets `FINCH_SOL_ALLOW_SPEND=1` (per-call caps: `FINCH_SOL_MAX_SEND_SOL` default 1, `FINCH_SOL_MAX_SWAP_SOL` default 5). Swap/launch transactions are verified (program allowlist, lookup tables, simulation) before signing.
+
 Set `FINCH_SOLANA_RPC_URL` for a private RPC (the URL/key is never echoed in tool output). `$FINCH` on Solana: `4LKS9yUYaBEZyzsaExmFXcWbG9pDBX7AWhseigVYpump`. See [docs/solana.md](docs/solana.md).
 
 ## Configuration
@@ -164,6 +166,7 @@ Set `FINCH_SOLANA_RPC_URL` for a private RPC (the URL/key is never echoed in too
 | `FIRECRAWL_API_KEY` | Better crawl quality (optional) |
 | `GITHUB_TOKEN` | For `github_search_code` |
 | `ALCHEMY_API_KEY` | Faster Base RPC (optional) |
+| `FINCH_SOL_ALLOW_SPEND` | Set to `1` to let `sol_swap`/`sol_send`/`sol_launch_token` execute (default: disabled). Caps: `FINCH_SOL_MAX_SEND_SOL` (1), `FINCH_SOL_MAX_SWAP_SOL` (5) |
 | `FINCH_SOLANA_RPC_URL` | Solana RPC for `sol_*` tools (default `https://api.mainnet-beta.solana.com`) |
 
 **Cost model:** almost everything is free to run — the other 110 tools are plain API/RPC calls, and your MCP client's own model (Claude, GPT, whatever's driving the chat) does all the tool-selection reasoning at no cost to Finch. The 5 exceptions above need their own key because their reasoning happens *inside* the tool call, invisible to your client, and can't be delegated to it. Set exactly one of the four env vars and every tool that needs it will use it automatically.

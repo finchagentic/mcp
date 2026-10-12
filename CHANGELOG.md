@@ -16,6 +16,17 @@ All notable changes to **@finchagentic/mcp** are documented in this file.
 ### Notes
 - Historical entries below may still mention Finch package names for accuracy of past releases.
 
+## [4.8.0] — Solana tools (unreleased) — security hardening after independent review
+
+### Security
+- **P0** Jupiter swap and pump.fun create transactions are verified before signing: fee payer, program allowlist, address-lookup-table resolution, banned System/Token instruction types, SOL-out caps, and a `simulateTransaction` balance check. Hostile transactions are refused and never sent.
+- Confirmation is bound to the previewed quote (`quoteId`); execution re-quotes and aborts on >0.5% worse min-received. `confirmed` must be boolean `true`.
+- Missing/non-finite `priceImpactPct` or missing `otherAmountThreshold` now throws. Slippage capped at 500 bps (1000 with `allowHighSlippage`).
+- Default-deny spend gate `FINCH_SOL_ALLOW_SPEND=1` plus `FINCH_SOL_MAX_SEND_SOL` / `FINCH_SOL_MAX_SWAP_SOL` caps.
+- `imageUrl` SSRF protections (https, DNS/IP checks, manual redirects, size cap, magic bytes); `metadataUri` host allowlist; JSON-quoted previews; description cap.
+- Wallet: scrypt KDF with per-file salt for new files (legacy files still readable), atomic fsync'd writes, dir 700, `.local-secret` never regenerated next to an existing wallet (also fixes the EVM wallet path).
+- Preflight SOL checks (fees, ATA rent, 0.01 SOL swap reserve), balance errors surfaced, Token-2022 transfer-fee/hook mints refused unless `allowToken2022Extensions:true`.
+
 ## [Unreleased]
 
 ## [4.8.0] — 2026-10-12

@@ -38,15 +38,44 @@ let _cachedWallet: ethers.Wallet | ethers.HDNodeWallet | null = null;
 
 export function clearWalletCache(): void { _cachedWallet = null; }
 
+export class LocalSecretMissingError extends Error {}
+// Set only while migrating a wallet we have ALREADY proven we can decrypt with a
+// legacy scheme; the only situation where minting a fresh .local-secret next to
+// an existing wallet file is safe.
+let _allowSecretCreation = false;
+
+function anyWalletFileExists(): boolean {
+  return fs.existsSync(WALLET_FILE) || fs.existsSync(path.join(WALLET_DIR, "solana-wallet.json"));
+}
+
 function getOrCreateLocalSecret(): string {
+  let readErr: any = null;
   try {
     const existing = fs.readFileSync(LOCAL_SECRET_FILE, "utf8").trim();
     if (existing) return existing;
-  } catch { /* doesn't exist yet, or unreadable - (re)create below */ }
+  } catch (e) { readErr = e; }
+  // Never silently regenerate the secret while a wallet file exists: every wallet
+  // encrypted with the old secret would become undecryptable (funds orphaned).
+  if (anyWalletFileExists() && !_allowSecretCreation) {
+    throw new LocalSecretMissingError(
+      `The per-install secret ${LOCAL_SECRET_FILE} is missing, empty or unreadable${readErr?.code ? ` (${readErr.code})` : ""}, but a wallet file already exists in ${WALLET_DIR}. ` +
+      "Refusing to generate a new secret because that would make the existing wallet(s) permanently undecryptable. " +
+      "Restore .local-secret from backup, or set FINCH_WALLET_PASSPHRASE to the passphrase the wallet was created with."
+    );
+  }
   const secret = crypto.randomBytes(32).toString("hex");
-  if (!fs.existsSync(WALLET_DIR)) fs.mkdirSync(WALLET_DIR, { recursive: true });
-  fs.writeFileSync(LOCAL_SECRET_FILE, secret, { mode: 0o600 });
+  if (!fs.existsSync(WALLET_DIR)) fs.mkdirSync(WALLET_DIR, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(WALLET_DIR, 0o700); } catch { /* best effort */ }
+  fs.writeFileSync(LOCAL_SECRET_FILE, secret, { mode: 0o600, flag: "wx" });
   return secret;
+}
+
+/** Raw key material for NEW scrypt-protected files (Solana wallet). With a
+ *  passphrase the raw passphrase is used (no pre-hash truncation). */
+export function getKeyMaterial(): string {
+  const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
+  if (passphrase) return "pass:" + passphrase;
+  return "local:" + getOrCreateLocalSecret() + os.hostname() + os.platform() + os.arch();
 }
 
 export function getMachineKey(): string {
@@ -150,6 +179,10 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
       _cachedWallet = wallet;
       return wallet;
     } catch (currentErr: any) {
+      const migrateWith = async (w: ethers.Wallet | ethers.HDNodeWallet) => {
+        _allowSecretCreation = true; // decrypt already proven with a legacy key
+        try { return await w.encrypt(getMachineKey()); } finally { _allowSecretCreation = false; }
+      };
       // Fall back to the pre-fix machine-bound scheme, for wallets encrypted
       // before passphrases became portable. Only relevant on the ORIGINAL
       // machine (it still needs that machine's hostname/platform/arch) - it
@@ -173,7 +206,7 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
         // Migrate in place to the portable scheme now that we've proven we
         // hold the right key, so this only ever needs to happen once.
         try {
-          const migrated = await legacyWallet.encrypt(getMachineKey());
+          const migrated = await migrateWith(legacyWallet);
           fs.writeFileSync(WALLET_FILE, migrated, { mode: 0o600 });
           process.stderr.write(`\nMigrated ${WALLET_FILE} to the portable passphrase scheme.\n\n`);
         } catch {
@@ -190,7 +223,7 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
           const oldNoPassWallet = await ethers.Wallet.fromEncryptedJson(encrypted, getLegacyMachineOnlyKey());
           _cachedWallet = oldNoPassWallet;
           try {
-            const migrated = await oldNoPassWallet.encrypt(getMachineKey());
+            const migrated = await migrateWith(oldNoPassWallet);
             fs.writeFileSync(WALLET_FILE, migrated, { mode: 0o600 });
             process.stderr.write(`\nMigrated ${WALLET_FILE} to the higher-entropy no-passphrase scheme.\n\n`);
           } catch {

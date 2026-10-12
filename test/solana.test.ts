@@ -15,55 +15,22 @@ import {
   SOL_MINT, USDC_MINT, FINCH_MINT, loadSolanaKeypair, solanaRpcUrl,
 } from "../src/tools/solana.js";
 
-const text = (r: any) => r.content[0].text as string;
-const calls: Array<{ url: string; init?: any }> = [];
+import dns from "dns";
+import { text, calls, mockFetch, sentTx } from "./helpers/solana-mock.js";
 
-function jupQuote(priceImpactFraction: string, out = "193041101607552") {
-  return {
-    inputMint: SOL_MINT, inAmount: "100000000", outputMint: FINCH_MINT, outAmount: out,
-    otherAmountThreshold: "192075896099515", swapMode: "ExactIn", slippageBps: 50,
-    priceImpactPct: priceImpactFraction,
-    routePlan: [{ swapInfo: { label: "Pump.fun Amm" } }, { swapInfo: { label: "Raydium" } }],
-  };
+// Spend gate is default-deny; these functional tests run with it enabled.
+process.env.FINCH_SOL_ALLOW_SPEND = "1";
+
+/** preview -> confirmed swap, binding the quoteId like a real client must. */
+async function swap(args: Record<string, any>, confirm = true) {
+  const prev: any = await handleSolanaTool("sol_swap", args);
+  if (!confirm) return prev;
+  return handleSolanaTool("sol_swap", { ...args, confirmed: true, quoteId: prev.structuredContent.quoteId });
 }
 
-function makeSwapTxB64(payer: { publicKey: PublicKey }): string {
-  const msg = new TransactionMessage({
-    payerKey: payer.publicKey, recentBlockhash: "11111111111111111111111111111111",
-    instructions: [SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: Keypair.generate().publicKey, lamports: 1 })],
-  }).compileToV0Message();
-  return Buffer.from(new VersionedTransaction(msg).serialize()).toString("base64");
-}
-
-function mockFetch(opts: { impact?: string; balanceLamports?: number } = {}) {
-  calls.length = 0;
-  vi.stubGlobal("fetch", vi.fn(async (url: any, init?: any) => {
-    const u = String(url);
-    calls.push({ url: u, init });
-    const json = (b: any, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
-    if (u.startsWith("https://lite-api.jup.ag/swap/v1/quote")) return json(jupQuote(opts.impact ?? "0.001"));
-    if (u === "https://lite-api.jup.ag/swap/v1/swap") {
-      const body = JSON.parse(init.body);
-      return json({ swapTransaction: makeSwapTxB64({ publicKey: new PublicKey(body.userPublicKey) }) });
-    }
-    if (u.startsWith("https://rpc.example.invalid")) {
-      const { method } = JSON.parse(init.body);
-      const res = (result: any) => json({ jsonrpc: "2.0", id: 1, result });
-      if (method === "getBalance") return res({ value: opts.balanceLamports ?? 5_000_000_000 });
-      if (method === "getLatestBlockhash") return res({ value: { blockhash: "11111111111111111111111111111111" } });
-      if (method === "getTokenAccountsByOwner") return res({ value: [] });
-      if (method === "sendTransaction") return res("FAKESIG");
-      if (method === "getSignatureStatuses") return res({ value: [{ err: null, confirmationStatus: "confirmed" }] });
-      return json({ jsonrpc: "2.0", id: 1, error: { message: "unmocked " + method } });
-    }
-    return json({ error: "unmocked " + u }, 404);
-  }));
-}
-
-const sentTx = () => calls.filter((c) => c.url.startsWith("https://rpc.example.invalid") && JSON.parse(c.init.body).method === "sendTransaction");
-
-beforeEach(() => { fs.rmSync(path.join(TMP_HOME, ".finch"), { recursive: true, force: true }); });
-afterEach(() => { vi.unstubAllGlobals(); });
+beforeEach(() => {
+  vi.spyOn(dns.promises, "lookup").mockImplementation((async (h: string) => [{ address: "93.184.216.34", family: 4 }]) as any); fs.rmSync(path.join(TMP_HOME, ".finch"), { recursive: true, force: true }); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("exact amount conversion", () => {
   it("converts without float error", () => {
@@ -132,7 +99,7 @@ describe("sol_swap safety", () => {
 
   it("confirmed=true with no local wallet is refused", async () => {
     mockFetch();
-    const r: any = await handleSolanaTool("sol_swap", { inputMint: "SOL", outputMint: "FINCH", amount: "0.1", confirmed: true });
+    const r: any = await swap({ inputMint: "SOL", outputMint: "FINCH", amount: "0.1" });
     expect(r.isError).toBe(true);
     expect(text(r)).toMatch(/No local Solana wallet/);
     expect(sentTx()).toHaveLength(0);
@@ -142,7 +109,7 @@ describe("sol_swap safety", () => {
   it("rejects price impact > 5% even when confirmed", async () => {
     mockFetch({ impact: "0.06" });
     await handleSolanaTool("sol_wallet", {});
-    const r: any = await handleSolanaTool("sol_swap", { inputMint: "SOL", outputMint: "FINCH", amount: "0.1", confirmed: true });
+    const r: any = await swap({ inputMint: "SOL", outputMint: "FINCH", amount: "0.1" });
     expect(r.isError).toBe(true);
     expect(text(r)).toMatch(/price impact 6\.00% exceeds the 5% limit/);
     expect(calls.some((c) => c.url.includes("/swap/v1/swap"))).toBe(false);
@@ -152,7 +119,7 @@ describe("sol_swap safety", () => {
   it("accepts 4.9% impact boundary path and sends only with confirmed=true", async () => {
     mockFetch({ impact: "0.049" });
     await handleSolanaTool("sol_wallet", {});
-    const r: any = await handleSolanaTool("sol_swap", { inputMint: "SOL", outputMint: "FINCH", amount: "0.1", confirmed: true });
+    const r: any = await swap({ inputMint: "SOL", outputMint: "FINCH", amount: "0.1" });
     expect(text(r)).toMatch(/Swap confirmed/);
     expect(sentTx()).toHaveLength(1);
   });
@@ -198,7 +165,7 @@ describe("sol_send / sol_launch_token confirm gate", () => {
     const base = (globalThis.fetch as any);
     vi.stubGlobal("fetch", vi.fn(async (url: any, init?: any) => {
       const u = String(url);
-      if (u === "https://example.com/i.png") return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "image/png" } });
+      if (u === "https://example.com/i.png") return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]), { headers: { "content-type": "image/png" } });
       if (u === "https://pump.fun/api/ipfs") {
         expect(init.body).toBeInstanceOf(FormData);
         expect((init.body as FormData).get("showName")).toBe("true");
@@ -210,7 +177,7 @@ describe("sol_send / sol_launch_token confirm gate", () => {
         const mintPk = new PublicKey(portalBody.mint);
         const msg = new TransactionMessage({
           payerKey: payer.publicKey, recentBlockhash: "11111111111111111111111111111111",
-          instructions: [{ programId: SystemProgram.programId, keys: [{ pubkey: payer.publicKey, isSigner: true, isWritable: true }, { pubkey: mintPk, isSigner: true, isWritable: true }], data: Buffer.alloc(0) }],
+          instructions: [{ programId: new PublicKey("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"), keys: [{ pubkey: payer.publicKey, isSigner: true, isWritable: true }, { pubkey: mintPk, isSigner: true, isWritable: true }], data: Buffer.alloc(0) }],
         }).compileToV0Message();
         return new Response(Buffer.from(new VersionedTransaction(msg).serialize()));
       }
@@ -253,7 +220,7 @@ describe("wallet secrecy", () => {
     const outs = [
       await handleSolanaTool("sol_balance", {}),
       await handleSolanaTool("sol_quote", { inputMint: "SOL", outputMint: "USDC", amount: "1" }),
-      await handleSolanaTool("sol_swap", { inputMint: "SOL", outputMint: "USDC", amount: "1", confirmed: true }),
+      await swap({ inputMint: "SOL", outputMint: "USDC", amount: "0.1" }),
       await handleSolanaTool("sol_send", { to, amount: "0.1", confirmed: true }),
     ];
     // and an RPC failure path
