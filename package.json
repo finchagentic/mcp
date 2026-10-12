@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "bin": {
     "finch": "dist/cli.js",
-    "finch-mcp": "dist/index.js"
+    "finch-mcp": "dist/index.js",
+    "mcp": "dist/index.js"
   },
   "preferGlobal": true,
   "scripts": {
