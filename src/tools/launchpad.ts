@@ -1,4 +1,5 @@
-// Finch launchpad MCP tools (Base + Robinhood Chain): wallet, pairs, launches, token, launch_token.
+// Finch launchpad MCP tools (Base + Robinhood Chain + Solana): wallet, pairs, launches, token, launch_token.
+// chain="solana" is handled in launchpad-solana.ts (launch runs in the user's Finch account; reads are public).
 // Custody is LOCAL (~/.finch/wallet.json). Spending is DEFAULT-DENY (FINCH_LAUNCHPAD_ALLOW_SPEND=1), exactly like sol_*.
 // launchpad_buy / launchpad_sell live in launchpad-swap.ts.
 
@@ -16,6 +17,9 @@ import {
   type LaunchChain, type LaunchQuote, type VerifiedLaunch, type LaunchRequest,
 } from "../launchpad-verify.js";
 import { startTickForFdv } from "../launchpad-math.js";
+import {
+  formatSolanaPairs, formatSolanaLaunch, solanaTokenRead, formatSolanaToken, parseSolanaMint, handleSolanaLaunch,
+} from "./launchpad-solana.js";
 
 // ── Output helpers (same shape as solana.ts) ─────────────────────────────────
 function ok(text: string, structured?: Record<string, unknown>): ToolResult {
@@ -160,6 +164,11 @@ function parseChain(v: unknown, allowAny = false): LaunchChain | "any" {
   if (allowAny && (s === "any" || s === "")) return "any";
   throw new Error(`chain must be "base" or "robinhood"${allowAny ? ' (or "any")' : ""}.`);
 }
+/** Like parseChain but also accepts "solana" (handled by launchpad-solana.ts). */
+function parseChainOrSolana(v: unknown, allowAny = false): LaunchChain | "any" | "solana" {
+  if (String(v ?? "").toLowerCase() === "solana") return "solana";
+  return parseChain(v, allowAny);
+}
 function parseToken(v: unknown): string {
   const s = String(v ?? "").trim();
   if (!/^0x[0-9a-fA-F]{40}$/.test(s)) throw new Error("token must be a 0x… 40-hex-char address.");
@@ -193,16 +202,16 @@ export const LAUNCHPAD_TOOLS: Tool[] = [
   },
   {
     name: "launchpad_pairs",
-    description: "Finch launchpad: supported chains, quote assets (ETH on Base; ETH and USDG on Robinhood Chain) and the fee split every new routed launch gets (90% AI founder / 10% creator / 0% platform).",
+    description: "Finch launchpad: supported chains, quote assets (ETH on Base; ETH and USDG on Robinhood Chain; SOL on Solana) and the fee split every new routed launch gets (90% AI founder / 10% creator / 0% platform).",
     inputSchema: { type: "object", properties: {}, required: [] },
   },
   {
     name: "launchpad_launches",
-    description: "Finch launchpad: list launched tokens on Base and/or Robinhood Chain, sorted by new / mcap / volume / gainers / holders.",
+    description: "Finch launchpad: list launched tokens on Base, Robinhood Chain and/or Solana, sorted by new / mcap / volume / gainers / holders.",
     inputSchema: {
       type: "object",
       properties: {
-        chain: { type: "string", enum: ["base", "robinhood", "any"], description: 'Default "any".' },
+        chain: { type: "string", enum: ["base", "robinhood", "solana", "any"], description: 'Default "any".' },
         sort: { type: "string", enum: ["new", "mcap", "volume", "gainers", "holders"], description: 'Default "new".' },
         limit: { type: "number", description: "1-50, default 20." },
       },
@@ -215,8 +224,8 @@ export const LAUNCHPAD_TOOLS: Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        chain: { type: "string", enum: ["base", "robinhood"] },
-        token: { type: "string", description: "Token address (0x…)." },
+        chain: { type: "string", enum: ["base", "robinhood", "solana"] },
+        token: { type: "string", description: "Token address (0x…), or the exact case-sensitive base58 mint on Solana." },
       },
       required: ["chain", "token"],
     },
@@ -224,13 +233,13 @@ export const LAUNCHPAD_TOOLS: Tool[] = [
   {
     name: "launchpad_launch_token",
     description:
-      "Finch launchpad: launch a new token on Base or Robinhood Chain from your LOCAL wallet. Costs only gas. Every launch gets an AI founder; trading fees are split " +
+      "Finch launchpad: launch a new token on Base or Robinhood Chain from your LOCAL wallet (costs only gas), or on Solana (chain=solana: executes in YOUR FINCH ACCOUNT's custodial Solana wallet, costs ~0.025 SOL rent, needs `finch login`; the agent self-funds). Every launch gets an AI founder; trading fees are split " +
       "90% AI founder / 10% you / 0% Finch (permanent). WRITE tool: returns a PREVIEW (nothing sent) unless confirmed=true, and requires the operator to set FINCH_LAUNCHPAD_ALLOW_SPEND=1. " +
       "Before signing, the MCP independently verifies the backend's launch parameters (factory, fee recipients, start tick, fee tier, predicted token address) and refuses on any mismatch.",
     inputSchema: {
       type: "object",
       properties: {
-        chain: { type: "string", enum: ["base", "robinhood"] },
+        chain: { type: "string", enum: ["base", "robinhood", "solana"] },
         name: { type: "string", description: "1-32 characters." },
         symbol: { type: "string", description: "1-10 letters/digits (upper-cased)." },
         description: { type: "string", description: "Max 280 characters." },
@@ -242,6 +251,8 @@ export const LAUNCHPAD_TOOLS: Tool[] = [
         feePercent: { type: "number", enum: [0, 1, 3], description: "Trading fee percent, default 1." },
         feeTo: { type: "string", enum: ["creator", "burn"], description: 'Default "creator" (90% AI founder / 10% you). "burn" burns all fees.' },
         agentBrief: { type: "string", description: "What the AI founder should build (max 500 chars)." },
+        startingMarketCapSol: { type: "number", description: "Solana only: opening market cap in WHOLE SOL (default 30)." },
+        boostSol: { type: "number", description: "Solana only: optional SOL deposited into the AI founder's budget (counts against FINCH_LAUNCHPAD_MAX_SOL_LAUNCH, default 0.5)." },
         confirmed: { type: "boolean", description: "Must be true to actually launch (preview otherwise)." },
         retryRegisterTxHash: { type: "string", description: "If a previous launch succeeded on-chain but registration failed, pass its tx hash (with confirmed=true) to retry registration only. Idempotent; sends no transaction." },
       },
@@ -291,15 +302,16 @@ async function handlePairs(): Promise<ToolResult> {
   const r = await callConvex("/launchpad/pairs", "GET", undefined, "launchpad_pairs");
   const lines: string[] = [];
   for (const [chain, v] of Object.entries<any>(r?.chains ?? {})) {
-    lines.push(`${q(chain)}: ` + (v?.quotes ?? []).map((x: any) => `${x.symbol} (${x.key}, ${x.decimals} dec, ${x.address})`).join(", "));
+    lines.push(chain === "solana" ? formatSolanaPairs(v) : `${q(chain)}: ` + (v?.quotes ?? []).map((x: any) => `${x.symbol} (${x.key}, ${x.decimals} dec, ${x.address})`).join(", "));
   }
   const s = r?.split ?? {};
   lines.push(`Fee split of every new routed launch: ${(s.agentBps ?? 0) / 100}% AI founder / ${(s.creatorBps ?? 0) / 100}% creator / ${(s.platformBps ?? 0) / 100}% platform.`);
+  if (r?.chains?.solana) lines.push(typeof r.chains.solana.splitNote === "string" ? `Solana: ${r.chains.solana.splitNote.replace(/^Solana:\s*/, "")} ` + "Launching needs `finch login` and runs in your Finch account; buy/sell use your local Solana wallet." : "Solana: the agent self-funds (90% agent / 10% you / 0% Finch), claimed by Finch's cron from your Finch wallet. Launching needs `finch login` and runs in your Finch account; buy/sell use your local Solana wallet.");
   return ok(lines.join("\n"), r);
 }
 
 async function handleLaunches(a: Record<string, any>): Promise<ToolResult> {
-  const chain = parseChain(a.chain ?? "any", true);
+  const chain = parseChainOrSolana(a.chain ?? "any", true);
   const sort = String(a.sort ?? "new");
   if (!["new", "mcap", "volume", "gainers", "holders"].includes(sort)) throw new Error("sort must be new, mcap, volume, gainers or holders.");
   const limit = a.limit === undefined ? 20 : Number(a.limit);
@@ -307,12 +319,17 @@ async function handleLaunches(a: Record<string, any>): Promise<ToolResult> {
   const r = await callConvex(`/launchpad/list?chain=${chain}&sort=${sort}&limit=${limit}`, "GET", undefined, "launchpad_launches");
   const list: any[] = Array.isArray(r?.launches) ? r.launches : [];
   if (list.length === 0) return ok("No launches found.", { launches: [] });
-  const lines = list.map((l, i) =>
+  const lines = list.map((l, i) => l.chain === "solana" ? formatSolanaLaunch(l, i) :
     `${i + 1}. ${q(l.name)} (${q(l.symbol)}) on ${l.chain} · ${l.token} · mcap $${fmt(l.marketCapUsd)} · 24h vol $${fmt(l.volume24hUsd)}${l.hasAgent ? ` · AI founder${l.agentSlug ? " " + q(l.agentSlug) : ""}` : ""}`);
   return ok(`Launches (${chain}, sort=${sort}):\n${lines.join("\n")}`, { launches: list });
 }
 
 async function handleToken(a: Record<string, any>): Promise<ToolResult> {
+  if (String(a.chain ?? "").toLowerCase() === "solana") {
+    const mint = parseSolanaMint(a.token);
+    const r = await solanaTokenRead(mint);
+    return ok(formatSolanaToken(r, mint).text, (r && typeof r === "object" ? r : { result: r }) as Record<string, unknown>);
+  }
   const chain = parseChain(a.chain) as LaunchChain;
   const token = parseToken(a.token);
   const r = await callConvex(`/launchpad/token?chain=${chain}&token=${token}`, "GET", undefined, "launchpad_token");
@@ -383,6 +400,7 @@ function finalReport(chain: LaunchChain, token: string, txHash: string, reg: { o
 }
 
 async function handleLaunch(a: Record<string, any>): Promise<ToolResult> {
+  if (String(a.chain ?? "").toLowerCase() === "solana") return handleSolanaLaunch(a, { optStr, httpsUrl });
   // Registration-only retry (no transaction, no gas).
   if (a.retryRegisterTxHash !== undefined && a.retryRegisterTxHash !== "") {
     const chain = parseChain(a.chain) as LaunchChain;

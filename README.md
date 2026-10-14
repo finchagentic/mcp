@@ -155,7 +155,7 @@ Set `FINCH_SOLANA_RPC_URL` for a private RPC (the URL/key is never echoed in too
 
 ## Launchpad tools (`launchpad_*`, in the `defi` palette)
 
-Launch and trade tokens on the **Finch launchpad** (Base + Robinhood Chain). Every launch also gets an AI founder that builds
+Launch and trade tokens on the **Finch launchpad** (Base, Robinhood Chain and Solana). Every launch also gets an AI founder that builds
 a real web product, funded by the coin's trading fees. The wallet is **local** (`~/.finch/wallet.json`); the key never leaves
 your machine and no tool returns it.
 
@@ -179,6 +179,31 @@ wallet, 10% go to you, 0% to Finch. `burn` and 0%-fee launches route nothing to 
   recipients are exactly the expected split) and simulates the transaction; a tampered response is refused and nothing is sent.
 - Trades: slippage default 1% (ceiling 5%), price impact above 5% refused, the transaction is simulated before it is sent.
 - To move ETH out of the wallet use `base_mcp_send`.
+
+### Solana (`chain: "solana"`)
+
+Solana is not a copy of the EVM flow:
+
+- **Reads** (`launchpad_pairs`, `launchpad_launches`, `launchpad_token`): SOL-denominated; pass the exact, case-sensitive base58 mint.
+- **Launch executes in your Finch account, not your local wallet.** A Solana launch creates a 1B-supply SPL mint (9 decimals, mint
+  authority revoked) and a single-sided Meteora DAMM v2 pool priced by `startingMarketCapSol` (whole SOL, default 30). It costs about
+  **0.025 SOL** of rent and fees, paid by your **Finch custodial Solana wallet**. The agent's share is not split by a contract:
+  Finch's fee-claim job claims LP fees from that Finch wallet, sends 90% to the coin's AI founder and leaves 10% with you; Finch takes 0%.
+  Launching from a local wallet would never fund the AI founder, so the tool does not do it.
+  - **It needs `finch login`** (a real session token: `FINCH_SESSION_TOKEN` or the token cached by `finch login`). A `FINCH_API_KEY`
+    or a wallet signature is not enough; without a session the tool stops with a "run `finch login`" error before contacting the launch route.
+  - The preview shows your Finch Solana wallet address and its SOL balance so you can fund it (`GET /launchpad/solana/wallet`).
+  - Optional `boostSol` deposits SOL into the AI founder's budget. `FINCH_LAUNCHPAD_MAX_SOL_LAUNCH` (default 0.5 SOL) caps boost + rent.
+  - It is a server-side action and is **never retried**. If the response is lost, check `launchpad_token` and your Finch wallet before trying again.
+- **Buy / sell use your LOCAL Solana wallet** (`sol_wallet`, `~/.finch/solana-wallet.json`) with a direct Meteora cp-amm swap
+  (Jupiter refuses fresh Finch pools). The instruction builders and the quote math are byte-for-byte ports of Finch's backend
+  (parity tests import the backend modules). Only Finch-launched mints are accepted (checked via `launchpad_token`, and the pool is
+  verified on-chain: owned by cp-amm, WSOL + your token). The transaction is checked to contain exactly the planned instructions,
+  only cp-amm / token / ATA / system / compute-budget programs, and is simulated: SOL leaving the wallet is capped at input + 0.01 SOL.
+  Slippage default 1% (ceiling 5%), price impact above 5% refused, quote drift above 0.5% between preview and execution refused,
+  per-buy cap `FINCH_LAUNCHPAD_MAX_BUY_SOL` (default 0.5). Same default-deny `FINCH_LAUNCHPAD_ALLOW_SPEND=1`.
+- Not yet proven: no Solana transaction has been sent through these tools; buy/sell are covered by mocks, byte parity with the backend
+  and read-only mainnet simulation only.
 
 ## Configuration
 

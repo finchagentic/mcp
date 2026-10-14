@@ -25,9 +25,23 @@ All notable changes to **@finchagentic/mcp** are documented in this file.
 - `launchpad_buy`, `launchpad_sell`: Uniswap v4 trades with slippage, price-impact and quote-drift guards, simulated before sending.
 - Spending is default-deny (`FINCH_LAUNCHPAD_ALLOW_SPEND=1`) with per-call caps.
 
+- **Solana** (`chain: "solana"`) on the same tools:
+  - Reads show SOL amounts and the exact base58 mint.
+  - `launchpad_launch_token` runs in **your Finch account** (custodial Solana wallet, ~0.025 SOL rent) via `POST /launchpad/solana/launch`,
+    because Finch's fee-claim job (not a contract) routes 90% to the AI founder / 10% to you / 0% Finch from that wallet.
+    **Requires `finch login`** (a real session token; an API key or wallet signature is refused before the launch route is contacted).
+    The preview shows your Finch wallet and balance. Cap `FINCH_LAUNCHPAD_MAX_SOL_LAUNCH` (default 0.5 SOL, boost + rent); never retried.
+  - `launchpad_buy` / `launchpad_sell` use your **local** Solana wallet with a direct Meteora cp-amm swap built locally
+    (byte-parity with the backend builders and quote math, pool + Finch-launch verified, plan-vs-transaction check, program allowlist,
+    simulation cap of input + 0.01 SOL, slippage default 1% / ceiling 5%, impact > 5% and quote drift > 0.5% refused,
+    cap `FINCH_LAUNCHPAD_MAX_BUY_SOL` default 0.5).
+
 ### Not yet proven
 - No transaction has been sent on mainnet through these tools (launch, buy, sell and Permit2 approvals are covered by
-  simulation and mocks only).
+  simulation and mocks only). Same for Solana: the launch route was exercised against mocks of Finch's response shape only.
+
+### Notes
+- `sol_launch_token` (pump.fun) is unchanged but its description now says it is legacy and points to `launchpad_launch_token` (`chain: "solana"`) for launching on Finch. It was added before Finch moved to its own Meteora launchpad.
 
 ## [4.8.0] — Solana tools (unreleased) — security hardening after independent review
 

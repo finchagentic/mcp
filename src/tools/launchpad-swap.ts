@@ -11,6 +11,7 @@ import {
   LaunchChain, ChainCfg, parseChain, quoteMeta, slippagePctToBps, minOutFromQuote, priceImpactBps, driftExceeded,
   finchPoolKey, poolIdOf, poolKeyTuple, buildSwap, swapQuoteId, SwapBuild,
 } from "../launchpad-v4.js";
+import { handleSolanaBuy, handleSolanaSell } from "./launchpad-solana.js";
 
 // ── Output helpers (same shape as solana.ts) ─────────────────────────────────
 function ok(text: string, structured?: Record<string, unknown>): ToolResult {
@@ -270,16 +271,16 @@ export async function runTrade(a: TradeArgs): Promise<ToolResult> {
 }
 
 // ── Tool definitions ─────────────────────────────────────────────────────────
-const CHAIN_PROP = { type: "string", enum: ["base", "robinhood"], description: "Chain the token was launched on." };
-const TOKEN_PROP = { type: "string", description: "Token contract address (0x…). Must have been launched by the Finch launch factory." };
+const CHAIN_PROP = { type: "string", enum: ["base", "robinhood", "solana"], description: "Chain the token was launched on." };
+const TOKEN_PROP = { type: "string", description: "Token contract address (0x…), or the exact base58 mint on Solana. Must have been launched by Finch." };
 const SLIP_PROP = { type: "number", description: "Max slippage in percent. Default 1, hard ceiling 5." };
 
 export const LAUNCHPAD_SWAP_TOOLS: Tool[] = [
   {
     name: "launchpad_buy",
     description:
-      "Buy a Finch-launched token with ETH (Base, Robinhood) or USDG (Robinhood, USDG-quoted launches) from the LOCAL wallet via the Uniswap v4 Universal Router. " +
-      "Default-deny: needs FINCH_LAUNCHPAD_ALLOW_SPEND=1 and respects FINCH_LAUNCHPAD_MAX_BUY_ETH (0.05) / FINCH_LAUNCHPAD_MAX_BUY_USDG (100). " +
+      "Buy a Finch-launched token with ETH (Base, Robinhood), USDG (Robinhood, USDG-quoted launches) or SOL (Solana) from the LOCAL wallet via the Uniswap v4 Universal Router (EVM) or a direct Meteora cp-amm swap (Solana). " +
+      "Default-deny: needs FINCH_LAUNCHPAD_ALLOW_SPEND=1 and respects FINCH_LAUNCHPAD_MAX_BUY_ETH (0.05) / FINCH_LAUNCHPAD_MAX_BUY_USDG (100) / FINCH_LAUNCHPAD_MAX_BUY_SOL (0.5). " +
       "Without confirmed=true it only returns a preview with a quoteId (nothing is sent); to execute, call again with confirmed=true and that quoteId. " +
       "Refuses price impact above 5%, quote drift above 0.5% between preview and execution, and any token not launched by the Finch factory. Simulates with eth_call before sending.",
     inputSchema: {
@@ -297,7 +298,7 @@ export const LAUNCHPAD_SWAP_TOOLS: Tool[] = [
   {
     name: "launchpad_sell",
     description:
-      "Sell a Finch-launched token back to its quote asset (ETH/USDG) from the LOCAL wallet via the Uniswap v4 Universal Router. Give either percent (1-100 of your balance) or amount (token units). " +
+      "Sell a Finch-launched token back to its quote asset (ETH/USDG/SOL) from the LOCAL wallet via the Uniswap v4 Universal Router (EVM) or a direct Meteora cp-amm swap (Solana, no approvals needed). Give either percent (1-100 of your balance) or amount (token units). " +
       "Needs FINCH_LAUNCHPAD_ALLOW_SPEND=1. Without confirmed=true it only returns a preview with a quoteId; to execute, repeat with confirmed=true and that quoteId. " +
       "May first send two approval transactions (token→Permit2, Permit2→router; exact amount, 1h expiry). Same safety refusals as launchpad_buy (impact >5%, drift >0.5%, non-Finch token).",
     inputSchema: {
@@ -325,6 +326,7 @@ function parseAmount(v: unknown, decimals: number, name: string): bigint {
 }
 
 async function handleBuy(a: Record<string, any>): Promise<ToolResult> {
+  if (String(a.chain ?? "").toLowerCase() === "solana") return handleSolanaBuy(a);
   const chain = parseChain(a.chain);
   const slippageBps = slippagePctToBps(a.slippagePct);
   const li = await resolveLaunch(chain, a.token);
@@ -334,6 +336,7 @@ async function handleBuy(a: Record<string, any>): Promise<ToolResult> {
 }
 
 async function handleSell(a: Record<string, any>): Promise<ToolResult> {
+  if (String(a.chain ?? "").toLowerCase() === "solana") return handleSolanaSell(a);
   const chain = parseChain(a.chain);
   const slippageBps = slippagePctToBps(a.slippagePct);
   const li = await resolveLaunch(chain, a.token);

@@ -663,7 +663,7 @@ export async function verifyJupiterSwapTx(tx: VersionedTransaction, wallet: Publ
   });
 }
 
-async function sendAndConfirm(tx: VersionedTransaction): Promise<string> {
+export async function sendAndConfirm(tx: VersionedTransaction): Promise<string> {
   const sig: string = await rpc("sendTransaction", [
     Buffer.from(tx.serialize()).toString("base64"),
     { encoding: "base64", skipPreflight: false, preflightCommitment: "confirmed", maxRetries: 3 },
@@ -871,7 +871,7 @@ export const SOLANA_TOOLS: Tool[] = [
   {
     name: "sol_launch_token",
     description:
-      "CAUTION: launch a token on pump.fun (via pumpportal) from the local Solana wallet, optional dev buy. Real funds. Disabled unless the operator sets FINCH_SOL_ALLOW_SPEND=1; devBuySol also capped by FINCH_SOL_MAX_SEND_SOL (default 1). " +
+      "LEGACY / NOT THE FINCH LAUNCHPAD: this launches on pump.fun (a third-party launchpad via pumpportal) from the local Solana wallet. A token launched this way has no Finch AI founder, no fee split and does not appear on the Finch launchpad. To launch on Finch (Meteora pool, AI founder funded 90% by trading fees) use launchpad_launch_token with chain=\"solana\". CAUTION: real funds, optional dev buy. Disabled unless the operator sets FINCH_SOL_ALLOW_SPEND=1; devBuySol also capped by FINCH_SOL_MAX_SEND_SOL (default 1). " +
       `Uploads image+metadata to pump.fun IPFS, then signs with a fresh mint keypair and the local wallet. Without confirmed=true returns a preview only. Needs balance >= devBuySol + 0.03 SOL; devBuySol max ${MAX_DEV_BUY_SOL}.`,
     inputSchema: {
       type: "object",
