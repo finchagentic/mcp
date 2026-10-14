@@ -37,6 +37,7 @@ const WRITE = new Set<string>([
   "code_session_save",
   "memory_add",
   "sol_wallet", // creates the local keypair on first use
+  "launchpad_wallet", // creates the local EVM wallet on first use
   "memory_extract",
   "memory_consolidate",
   "packet_create",
@@ -77,6 +78,10 @@ const DESTRUCTIVE = new Set<string>([
   "sol_swap",
   "sol_send",
   "sol_launch_token",
+  // money movement (Finch launchpad, local EVM wallet). A launch is irreversible and fixes the fee split forever.
+  "launchpad_launch_token",
+  "launchpad_buy",
+  "launchpad_sell",
   "rh_dca_create", // arms recurring real buys
   "rh_bracket_create", // arms real TP/SL sells
   // a swap/send automation arms unattended, REPEATING real fund movement

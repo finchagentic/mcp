@@ -19,7 +19,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 // the build, instead of quietly vanishing like these did.
 const PRESETS: Record<string, RegExp> = {
   core: /^(memory_|vault_|code_session_save|list_projects|agent_|ask_finch|finch_status|finch_diagnostics|finch_shell_chat|get_wallet_address|get_wallet_balance|wallet_sign_message|chronicle_|packet_)/,
-  defi: /^(get_market_data|get_token_data|compare_tokens|market_overview|token_history|get_base_token_data|stock_fundamentals|stock_insider|stock_events|market_thesis|trade_plan|base_mcp_|rh_|sol_|base_|get_defi_yields|score_token|check_token|scan_market|get_wallet_balance|wallet_sign_message|create_automation|list_automations|pause_automation|delete_automation|get_automation_runs|run_automation|miroshark_|stake_|unstake_finch|claim_vested_rewards)/,
+  defi: /^(get_market_data|get_token_data|compare_tokens|market_overview|token_history|get_base_token_data|stock_fundamentals|stock_insider|stock_events|market_thesis|trade_plan|base_mcp_|rh_|sol_|launchpad_|base_|get_defi_yields|score_token|check_token|scan_market|get_wallet_balance|wallet_sign_message|create_automation|list_automations|pause_automation|delete_automation|get_automation_runs|run_automation|miroshark_|stake_|unstake_finch|claim_vested_rewards)/,
   research: /^(memory_|vault_|code_session_save|list_projects|deep_research|research_compare|research_chain|web_search|web_scrape|schedule_research|list_monitors|cancel_monitor|ask_finch|stock_fundamentals|stock_insider|stock_events)/,
   memory: /^(memory_|vault_|code_session_save|list_projects|agent_|chronicle_)/,
   coder: /^(audit_contract|github_|code_session_save)/,

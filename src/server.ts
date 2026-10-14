@@ -53,6 +53,8 @@ import { BASE_TOOLS, handleBaseTool } from "./tools/base.js";
 import { BASE_MCP_TOOLS, handleBaseMcpTool } from "./tools/base-mcp.js";
 import { RH_MCP_TOOLS, handleRhMcpTool } from "./tools/rh-mcp.js";
 import { SOLANA_TOOLS, handleSolanaTool } from "./tools/solana.js";
+import { LAUNCHPAD_TOOLS, handleLaunchpadTool } from "./tools/launchpad.js";
+import { LAUNCHPAD_SWAP_TOOLS, handleLaunchpadSwapTool } from "./tools/launchpad-swap.js";
 import { RH_ORDER_TOOLS, handleRhOrderTool } from "./tools/rh-orders.js";
 import { BRIDGE_TOOLS, handleBridgeTool } from "./tools/rh-bridge.js";
 import { MEMORY_TOOLS, handleMemoryTool } from "./tools/memory.js";
@@ -105,6 +107,8 @@ export const ALL_TOOLS = [
   ...BASE_TOOLS,         // 4 - base_mcp_yield_vaults, base_mcp_lending_rates, base_mcp_deposit_guide, base_mcp_network
   ...BASE_MCP_TOOLS,     // 7 - base_mcp_{status,balance,send,swap,estimate,lend,resolve} (analyze removed v3.17.5 - dead backend route)
   ...SOLANA_TOOLS,       // 7 - sol_{wallet,balance,token_info,quote,swap,send,launch_token} (Solana: Jupiter swaps, SPL sends, pump.fun launches)
+  ...LAUNCHPAD_TOOLS,    // 5 - launchpad_{wallet,pairs,launches,token,launch_token} (Finch launchpad on Base + Robinhood Chain; local wallet, default-deny spend)
+  ...LAUNCHPAD_SWAP_TOOLS, // 2 - launchpad_{buy,sell} (Uniswap v4 via the Universal Router; slippage-bound, simulated before sending)
   ...RH_MCP_TOOLS,       // 8 - rh_mcp_{status,list_stocks,balance,estimate,swap} + rh_token_resolve, rh_analyze, rh_safety_check (RH Chain 4663 Uni V4: stocks + arbitrary crypto via DexScreener/Blockscout)
   ...RH_ORDER_TOOLS,     // 5 - rh_dca_create, rh_bracket_create, rh_orders_list, rh_order_cancel, rh_orders_tick (RH automated DCA/TP/SL)
   ...BRIDGE_TOOLS,       // 1 - rh_stock_bridge (tokenized stock vs real equity)
@@ -144,6 +148,8 @@ export const HANDLER_MAP = new Map<string, Handler>([
   ...BASE_TOOLS.map(t        => [t.name, handleBaseTool]        as [string, Handler]),
   ...BASE_MCP_TOOLS.map(t    => [t.name, handleBaseMcpTool]    as [string, Handler]),
   ...SOLANA_TOOLS.map(t      => [t.name, handleSolanaTool]      as [string, Handler]),
+  ...LAUNCHPAD_TOOLS.map(t   => [t.name, handleLaunchpadTool]   as [string, Handler]),
+  ...LAUNCHPAD_SWAP_TOOLS.map(t => [t.name, handleLaunchpadSwapTool] as [string, Handler]),
   ...RH_MCP_TOOLS.map(t      => [t.name, handleRhMcpTool]       as [string, Handler]),
   ...RH_ORDER_TOOLS.map(t    => [t.name, handleRhOrderTool]     as [string, Handler]),
   ...BRIDGE_TOOLS.map(t      => [t.name, handleBridgeTool]      as [string, Handler]),
