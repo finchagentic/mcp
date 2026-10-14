@@ -16,6 +16,19 @@ All notable changes to **@finchagentic/mcp** are documented in this file.
 ### Notes
 - Historical entries below may still mention Finch package names for accuracy of past releases.
 
+## [4.9.0] — Launchpad tools (unreleased)
+
+### Added
+- `launchpad_wallet`, `launchpad_pairs`, `launchpad_launches`, `launchpad_token`: read the Finch launchpad (Base + Robinhood Chain).
+- `launchpad_launch_token`: launch with a local wallet. The server's prepare response is verified field by field before signing;
+  the permanent fee split is 90% AI founder / 10% you / 0% Finch.
+- `launchpad_buy`, `launchpad_sell`: Uniswap v4 trades with slippage, price-impact and quote-drift guards, simulated before sending.
+- Spending is default-deny (`FINCH_LAUNCHPAD_ALLOW_SPEND=1`) with per-call caps.
+
+### Not yet proven
+- No transaction has been sent on mainnet through these tools (launch, buy, sell and Permit2 approvals are covered by
+  simulation and mocks only).
+
 ## [4.8.0] — Solana tools (unreleased) — security hardening after independent review
 
 ### Security

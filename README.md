@@ -153,6 +153,33 @@ Scheduled/cloud features still need an account. Core memory, vault, and public-d
 
 Set `FINCH_SOLANA_RPC_URL` for a private RPC (the URL/key is never echoed in tool output). `$FINCH` on Solana: `4LKS9yUYaBEZyzsaExmFXcWbG9pDBX7AWhseigVYpump`. See [docs/solana.md](docs/solana.md).
 
+## Launchpad tools (`launchpad_*`, in the `defi` palette)
+
+Launch and trade tokens on the **Finch launchpad** (Base + Robinhood Chain). Every launch also gets an AI founder that builds
+a real web product, funded by the coin's trading fees. The wallet is **local** (`~/.finch/wallet.json`); the key never leaves
+your machine and no tool returns it.
+
+| Tool | What it does |
+|---|---|
+| `launchpad_wallet` | Local EVM address, ETH on Base + Robinhood, spend-gate state and caps (creates the wallet on first use) |
+| `launchpad_pairs` | What a token can be paired with on each chain, and the fee split |
+| `launchpad_launches` | Browse launches (`new`, `mcap`, `volume`, `gainers`, `holders`) |
+| `launchpad_token` | Price, market cap, volume, holders, and the AI founder (status, version, product URL) |
+| `launchpad_launch_token` | Launch a token. Preview unless `confirmed: true` |
+| `launchpad_buy` / `launchpad_sell` | Trade a launched token through Uniswap v4. Preview, then confirm with the returned `quoteId` |
+
+**Fee split of a new launch (written into the locker at launch, permanent):** 90% of trading fees fund the AI founder's budget
+wallet, 10% go to you, 0% to Finch. `burn` and 0%-fee launches route nothing to the agent; a quote that cannot fund the agent keeps
+100% with you (the preview says which applies).
+
+**Safety**
+- Spending is **default-deny**: set `FINCH_LAUNCHPAD_ALLOW_SPEND=1` to allow `launchpad_launch_token`, `launchpad_buy`, `launchpad_sell`.
+- Caps per call: `FINCH_LAUNCHPAD_MAX_BUY_ETH` (default 0.05), `FINCH_LAUNCHPAD_MAX_BUY_USDG` (default 100), `FINCH_LAUNCHPAD_MAX_GAS_ETH` (default 0.01). Junk values fail closed.
+- Before signing a launch the tool checks the server's answer field by field (launcher, factory, locker, tick, fee, and that the
+  recipients are exactly the expected split) and simulates the transaction; a tampered response is refused and nothing is sent.
+- Trades: slippage default 1% (ceiling 5%), price impact above 5% refused, the transaction is simulated before it is sent.
+- To move ETH out of the wallet use `base_mcp_send`.
+
 ## Configuration
 
 | Variable | Purpose |
