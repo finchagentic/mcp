@@ -4,11 +4,105 @@ import { OUTPUT_SCHEMAS } from "./output-schemas.js";
 // MCP tool annotation hints (spec 2025-06-18): readOnlyHint (no state
 // change), destructiveHint (irreversible - delete/cancel/move funds),
 // idempotentHint (safe to re-run with same args), openWorldHint (touches an
-// external system). Default here is read-only + open-world; mutating tools
-// opt out below. Single injection point (withAnnotations) instead of
+// external system). Default here is FAIL-CLOSED (destructive); every tool is
+// classified explicitly below. Single injection point (withAnnotations) instead of
 // scattering this across 25 tool files.
 
 type Ann = NonNullable<Tool["annotations"]>;
+
+// Read-only, open-world (touch an external system but change nothing). EVERY read-only tool must be
+// listed here by name: annotationsFor() is fail-closed, so a tool missing from all sets is treated as
+// destructive and clients will confirm before running it. test/annotations-failclosed.test.ts enforces
+// that every registered tool has an explicit entry.
+const READ_ONLY_OPEN = new Set<string>([
+  "get_market_data",
+  "get_token_data",
+  "compare_tokens",
+  "market_overview",
+  "token_history",
+  "get_base_token_data",
+  "ask_finch",
+  "market_thesis",
+  "trade_plan",
+  "get_defi_yields",
+  "list_automations",
+  "get_automation_runs",
+  "vault_read",
+  "vault_list",
+  "vault_search",
+  "vault_history",
+  "vault_diff",
+  "vault_export",
+  "vault_related",
+  "list_projects",
+  "get_wallet_address",
+  "get_wallet_balance",
+  "miroshark_status",
+  "agent_recall",
+  "agent_ledger",
+  "score_token",
+  "check_token",
+  "scan_market",
+  "stock_fundamentals",
+  "stock_insider",
+  "stock_events",
+  "base_mcp_yield_vaults",
+  "base_mcp_lending_rates",
+  "base_mcp_deposit_guide",
+  "base_mcp_network",
+  "base_mcp_status",
+  "base_mcp_balance",
+  "base_mcp_estimate",
+  "base_mcp_lend",
+  "base_mcp_resolve",
+  "sol_balance",
+  "sol_token_info",
+  "sol_quote",
+  "launchpad_pairs",
+  "launchpad_launches",
+  "launchpad_token",
+  "rh_mcp_status",
+  "rh_mcp_list_stocks",
+  "rh_mcp_balance",
+  "rh_mcp_estimate",
+  "rh_token_resolve",
+  "rh_analyze",
+  "rh_safety_check",
+  "rh_orders_list",
+  "rh_stock_bridge",
+  "memory_search",
+  "memory_context",
+  "memory_profile",
+  "memory_list",
+  "memory_insight",
+  "finch_diagnostics",
+  "web_scrape",
+  "web_search",
+  "deep_research",
+  "research_compare",
+  "research_chain",
+  "list_monitors",
+  "github_list_repos",
+  "github_list_prs",
+  "github_get_pr",
+  "github_list_issues",
+  "github_get_issue",
+  "github_get_file",
+  "github_get_commits",
+  "github_search_code",
+  "chronicle_list",
+  "chronicle_search",
+  "chronicle_stats",
+  "packet_list",
+  "stake_finch_status",
+  "finch_status",
+]);
+
+// Reads that expose SECRETS. Not mutating, but a client must not auto-run them (a prompt-injected
+// page could otherwise exfiltrate credentials): readOnlyHint=false so clients ask first.
+const SENSITIVE_READ = new Set<string>([
+  "vault_get_credential",
+]);
 
 // Read-only AND no network - a purely local computation (static analysis).
 // Read-only but open-world is the default, so this set only exists to flip
@@ -112,10 +206,18 @@ export function annotationsFor(name: string): Ann {
   if (WRITE.has(name)) {
     return { readOnlyHint: false, destructiveHint: false, openWorldHint: true };
   }
+  if (SENSITIVE_READ.has(name)) {
+    // local or own-account vault, not an external system; still gated behind a user prompt.
+    return { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+  }
   if (READ_ONLY_LOCAL.has(name)) {
     return { readOnlyHint: true, openWorldHint: false };
   }
-  return { readOnlyHint: true, openWorldHint: true };
+  if (READ_ONLY_OPEN.has(name)) {
+    return { readOnlyHint: true, openWorldHint: true };
+  }
+  // FAIL CLOSED: an unclassified tool is assumed to be destructive until someone classifies it.
+  return { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
 }
 
 // Decorate a tool list with MCP metadata: behavioural annotations
@@ -135,7 +237,13 @@ export function withAnnotations(tools: Tool[]): Tool[] {
 
 // Exported for the test suite to assert the classification only references real
 // tool names (catches typos / tools renamed out from under a set).
+export function isExplicitlyClassified(name: string): boolean {
+  return DESTRUCTIVE.has(name) || WRITE_IDEMPOTENT.has(name) || WRITE.has(name) || READ_ONLY_LOCAL.has(name) ||
+    READ_ONLY_OPEN.has(name) || SENSITIVE_READ.has(name);
+}
+
 export const MUTATING_TOOL_NAMES: readonly string[] = [
+  ...SENSITIVE_READ,
   ...WRITE_IDEMPOTENT,
   ...WRITE,
   ...DESTRUCTIVE,
