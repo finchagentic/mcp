@@ -7,7 +7,8 @@ import { decimalsFor } from "../token-decimals.js";
 import { parseOrError } from "../_zod-helpers.js";
 import { ethers } from "ethers";
 import { buildErc20Transfer, verifyErc20Transfer, resolveSlippagePct } from "../evm-guard.js";
-import { BASE_RPC } from "../wallet.js";
+import { BASE_RPC, BASE_CHAIN_ID } from "../wallet.js";
+import { gateSpend, baseAssetUsd, moneyResult } from "../spend-gate.js";
 
 /** Base ERC-20s the send tool resolves by symbol. Anything else must be passed as a 0x contract address. */
 export const BASE_TOKENS: Record<string, { address: string; decimals: number }> = {
@@ -80,11 +81,13 @@ const SwapSchema = z.object({
   amount: z.string().min(1),
   maxSlippagePct: z.number().positive().max(5).optional(),
   maxPriceImpactPct: z.number().positive().max(50).optional(),
+  confirm: z.boolean().optional(),
+  quoteId: z.string().optional(),
 });
 
 const DEFAULT_MAX_SLIPPAGE_PCT = 1.0;
 const DEFAULT_MAX_PRICE_IMPACT_PCT = 3.0;
-const SendSchema = z.object({ token: z.string().min(1), toAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/, "must be a valid 0x address"), amount: z.string().min(1) });
+const SendSchema = z.object({ token: z.string().min(1), toAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/, "must be a valid 0x address"), amount: z.string().min(1), confirm: z.boolean().optional(), quoteId: z.string().optional() });
 const DefiYieldsSchema = z.object({
   token:  z.string().optional(),
   minApy: z.number().optional(),
@@ -192,13 +195,23 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
       const { fromToken, toToken, amount, maxSlippagePct, maxPriceImpactPct } = parsed.data;
       const slippageLimit = resolveSlippagePct(maxSlippagePct ?? DEFAULT_MAX_SLIPPAGE_PCT);
       const impactLimit = maxPriceImpactPct ?? DEFAULT_MAX_PRICE_IMPACT_PCT;
+      const gate = await gateSpend({
+        tool: "swap_tokens", chainId: BASE_CHAIN_ID,
+        params: { fromToken, toToken, amount, slippageLimit, impactLimit },
+        usd: () => baseAssetUsd(fromToken, amount),
+        wei: fromToken.trim().toUpperCase() === "ETH" ? (() => { try { return ethers.parseEther(amount); } catch { return 0n; } })() : 0n,
+        confirm: parsed.data.confirm, quoteId: parsed.data.quoteId,
+        summary: `Swap ${amount} ${fromToken.toUpperCase()} → ${toToken.toUpperCase()} on Base (slippage cap ${slippageLimit}%, price-impact cap ${impactLimit}%).`,
+      });
+      if (!gate.ok) return gate.result;
       const wallet = await getOrCreateWallet();
       const result = await callConvex("/mcp/defi/swap", "POST", { fromToken, toToken, amount, taker: wallet.address, slippagePercentage: slippageLimit / 100 }, "swap_tokens");
-      if (!result.success) return { content: [{ type: "text", text: `Swap failed: ${result.error}` }], isError: true };
+      if (!result.success) { gate.reservation?.release(); return { content: [{ type: "text", text: `Swap failed: ${result.error}` }], isError: true }; }
 
       const q = result.quote;
       const impactPct = q.estimatedPriceImpact != null ? Number(q.estimatedPriceImpact) : 0;
       if (impactPct > impactLimit) {
+        gate.reservation?.release();
         return {
           content: [{
             type: "text",
@@ -218,7 +231,10 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
 
       let maxValueWei = 0n;
       if (fromToken.trim().toUpperCase() === "ETH") { try { maxValueWei = ethers.parseEther(amount); } catch { maxValueWei = 0n; } }
-      const txHash = await signAndBroadcast(wallet, q, { kind: "swap", maxValueWei });
+      let txHash: string;
+      try { txHash = await signAndBroadcast(wallet, q, { kind: "swap", maxValueWei }); }
+      catch (e) { gate.reservation?.release(); throw e; }
+      gate.reservation?.commit(txHash);
       const buyAmountHuman = formatTokenAmount(q.buyAmount, q.buyToken ?? toToken);
       const receipt = await waitForReceipt(txHash);
       const header = !receipt.mined
@@ -226,10 +242,8 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
         : receipt.ok
           ? `✅ Swap confirmed on-chain (block ${receipt.blockNumber}).`
           : `❌ Transaction REVERTED - no swap occurred (gas was still spent).`;
-      return {
-        content: [{
-          type: "text",
-          text: [
+      return moneyResult(
+          [
             header,
             `${amount} ${fromToken.toUpperCase()} → ${receipt.mined && receipt.ok ? buyAmountHuman : "(quoted, not received)"} ${q.buyToken}`,
             `Slippage cap: ${slippageLimit}% · Price impact: ${impactPct.toFixed(3)}%`,
@@ -237,41 +251,52 @@ export async function handleDefiTool(name: string, args: unknown): Promise<ToolR
             `https://basescan.org/tx/${txHash}`,
             !receipt.mined ? `Check the link above before telling the user this succeeded or failed.` : "",
           ].filter(Boolean).join("\n"),
-        }],
-        isError: receipt.mined && !receipt.ok,
-      };
+        { txHash, status: !receipt.mined ? "pending" : receipt.ok ? "confirmed" : "reverted", chainId: BASE_CHAIN_ID },
+        receipt.mined && !receipt.ok,
+      );
     }
 
     case "send_token": {
       const parsed = SendSchema.safeParse(args);
       if (!parsed.success) return { content: [{ type: "text", text: `${String(parsed.error.issues[0].path[0])}: ${parsed.error.issues[0].message}` }], isError: true };
       const { token, toAddress, amount } = parsed.data;
+      const gate = await gateSpend({
+        tool: "send_token", chainId: BASE_CHAIN_ID,
+        params: { token, toAddress, amount },
+        recipient: toAddress,
+        usd: () => baseAssetUsd(token, amount),
+        wei: token.trim().toUpperCase() === "ETH" ? (() => { try { return ethers.parseEther(amount); } catch { return 0n; } })() : 0n,
+        confirm: parsed.data.confirm, quoteId: parsed.data.quoteId,
+        summary: `Send ${amount} ${token.toUpperCase()} → ${toAddress} on Base.`,
+      });
+      if (!gate.ok) return gate.result;
       const wallet = await getOrCreateWallet();
       // The backend is NOT trusted to build the transfer: calldata is encoded here and re-decoded to verify
       // recipient and amount before signing.
       let built;
       try { built = await buildSendTx(token, toAddress, amount); }
-      catch (e: any) { return { content: [{ type: "text", text: `Send failed: ${e?.message ?? e}` }], isError: true }; }
-      const txHash = await signAndBroadcast(wallet, built.tx, { kind: "transfer", maxValueWei: built.tokenAddress ? 0n : built.amountWei });
+      catch (e: any) { gate.reservation?.release(); return { content: [{ type: "text", text: `Send failed: ${e?.message ?? e}` }], isError: true }; }
+      let txHash: string;
+      try { txHash = await signAndBroadcast(wallet, built.tx, { kind: "transfer", maxValueWei: built.tokenAddress ? 0n : built.amountWei }); }
+      catch (e) { gate.reservation?.release(); throw e; }
+      gate.reservation?.commit(txHash);
       const receipt = await waitForReceipt(txHash);
       const header = !receipt.mined
         ? `⏳ Broadcast, not yet confirmed within the wait window.`
         : receipt.ok
           ? `✅ Sent - confirmed on-chain (block ${receipt.blockNumber}).`
           : `❌ Transaction REVERTED - funds were NOT sent (gas was still spent).`;
-      return {
-        content: [{
-          type: "text",
-          text: [
+      return moneyResult(
+          [
             header,
             `${amount} ${token.toUpperCase()} → \`${toAddress}\``,
             `Tx Hash: \`${txHash}\``,
             `https://basescan.org/tx/${txHash}`,
             !receipt.mined ? `Check the link above before telling the user this succeeded or failed.` : "",
           ].filter(Boolean).join("\n"),
-        }],
-        isError: receipt.mined && !receipt.ok,
-      };
+        { txHash, status: !receipt.mined ? "pending" : receipt.ok ? "confirmed" : "reverted", chainId: BASE_CHAIN_ID },
+        receipt.mined && !receipt.ok,
+      );
     }
 
     // analyze_wallet was removed - it called POST /wallet/analyze, which was

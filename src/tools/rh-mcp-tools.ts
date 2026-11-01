@@ -88,6 +88,10 @@ export const RH_MCP_TOOLS: Tool[] = [
           type: "boolean",
           description: "Must be true to broadcast. Prevents accidental live swaps.",
         },
+        quoteId: {
+          type: "string",
+          description: "Required with confirm:true. Returned by the preview call (same params without confirm); single use, 10 min.",
+        },
         acceptBadPrice: {
           type: "boolean",
           description:
