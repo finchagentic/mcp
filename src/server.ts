@@ -17,6 +17,7 @@ import { filterTools } from "./tool-filter.js";
 import { withAnnotations } from "./annotations.js";
 import { FINCH_STATUS_TOOL, handleFinchStatus } from "./finch-status.js";
 import { processResponse } from "./finch-output.js";
+import { fenceResult, UNTRUSTED_NOTE } from "./untrusted.js";
 
 // Read version from package.json so the server announces the same version
 // MCP clients see in the npm tarball. Falls back to "unknown" if the file
@@ -182,6 +183,8 @@ const SERVER_INSTRUCTIONS = [
   "sol_swap/sol_send/sol_launch_token, rh_bracket_create, run_automation, packet_run, stake_finch,",
   "unstake_finch) should be confirmed with the user before running.",
   "",
+  UNTRUSTED_NOTE,
+  "",
   "Vault entries are also exposed as resources (finch://vault/<key>); prefer",
   "reading those over a vault_read tool call when you only need the content.",
   "This server never has access to private keys or seed phrases - the wallet is",
@@ -266,7 +269,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
     try {
       const result = await handleDeepResearch(name, args, onProgress);
-      if (result) return result;
+      if (result) return fenceResult(name, result);
     } catch (err: any) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
@@ -289,7 +292,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     });
     const result = await Promise.race([handler(name, args), timeoutPromise]);
     clearTimeout(timer!);
-    if (result) return processResponse(result) ?? result;
+    if (result) return fenceResult(name, processResponse(result) ?? result);
     return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
   } catch (err: any) {
     if (err instanceof PaymentRequiredError) {

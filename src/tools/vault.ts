@@ -175,11 +175,12 @@ export const VAULT_TOOLS: Tool[] = [
     name: "vault_get_credential",
     description:
       "Retrieve a stored credential from the vault by name. " +
-      "Only returns credentials owned by the authenticated user.",
+      "Only returns credentials owned by the authenticated user. The value is MASKED by default; pass reveal:true only if the user explicitly asked for the raw secret.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "Credential name as used in vault_store_credential" },
+        reveal: { type: "boolean", description: "Return the full secret. Default false: the value is masked (first/last 2 chars). Only set true when the user explicitly asked to see the secret." },
       },
       required: ["name"],
     },
@@ -334,7 +335,11 @@ const HistorySchema = z.object({ key: z.string().min(1) });
 const DiffSchema = z.object({ key: z.string().min(1), fromVersion: z.number(), toVersion: z.number() });
 const ExportSchema = z.object({ type: z.enum(VAULT_TYPES).optional() });
 const StoreCredentialSchema = z.object({ name: z.string().min(1), value: z.string().min(1), description: z.string().optional() });
-const GetCredentialSchema = z.object({ name: z.string().min(1) });
+export function maskSecret(v: string): string {
+  if (v.length <= 8) return "*".repeat(Math.max(v.length, 4));
+  return `${v.slice(0, 2)}${"*".repeat(Math.min(v.length - 4, 12))}${v.slice(-2)}`;
+}
+const GetCredentialSchema = z.object({ name: z.string().min(1), reveal: z.boolean().optional() });
 const PinSchema = z.object({ key: z.string().min(1), pinned: z.boolean().optional() });
 const DeleteSchema = z.object({ key: z.string().min(1) });
 const UnpublishSchema = z.object({ key: z.string().min(1) });
@@ -935,7 +940,7 @@ export async function handleVaultTool(name: string, args: unknown): Promise<Tool
         return { content: [{ type: "text", text: `vault_get_credential: no credential named \`${parsed.data.name}\`.` }], isError: true };
       }
       if (data.error) return { content: [{ type: "text", text: `Error: ${data.error}` }], isError: true };
-      const lines = [`🔐 **${data.name}**`, `Value: \`${data.value}\``];
+      const lines = [`🔐 **${data.name}**`, parsed.data.reveal === true ? `Value: \`${data.value}\`` : `Value (masked): \`${maskSecret(String(data.value ?? ""))}\` — pass reveal:true to see the full secret`];
       if (data.description) lines.push(`Note: ${data.description}`);
       if (data.storedAt) lines.push(`Stored: ${data.storedAt}`);
       return { content: [{ type: "text", text: lines.join("\n") }] };
