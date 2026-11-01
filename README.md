@@ -25,17 +25,19 @@ Most AI assistants disappear when the conversation ends. **Finch** gives them la
 
 ## Install
 
-Always pin the version. Never use `@latest`.
+Pin an exact version (the commands below do). `@latest` is fine for a quick look at read-only tools, but do not use it
+once the server can reach a funded wallet: an unreviewed new release would run with your keys, so upgrade deliberately by
+bumping the pin after reading the [CHANGELOG](CHANGELOG.md).
 
 ```bash
 # One-command installer (detects common MCP clients)
-npx -y -p @finchagentic/mcp@4.6.1 finch install
+npx -y -p @finchagentic/mcp@4.9.0 finch install
 ```
 
 ### Claude Code
 
 ```bash
-claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.6.1 finch-mcp
+claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.9.0 finch-mcp
 ```
 
 ### Cursor / Windsurf / Claude Desktop
@@ -45,7 +47,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.6.1 finch-mcp
   "mcpServers": {
     "finch": {
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.6.1", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.9.0", "finch-mcp"]
     }
   }
 }
@@ -59,7 +61,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.6.1 finch-mcp
     "finch": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.6.1", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.9.0", "finch-mcp"]
     }
   }
 }
@@ -79,7 +81,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.6.1 finch-mcp
 
 </details>
 
-No LLM API key is required to start — 111 of 116 tools are plain reads/writes/on-chain calls that your MCP client's own model already drives; only 5 (`ask_finch`, `deep_research`, and scheduled agent learning) do their own multi-step reasoning server-side and need a key (see [Configuration](#configuration)). Tools load on first use.
+No LLM API key is required to start — 128 of 133 tools are plain reads/writes/on-chain calls that your MCP client's own model already drives; only 5 (`ask_finch`, `deep_research`, and scheduled agent learning) do their own multi-step reasoning server-side and need a key (see [Configuration](#configuration)). Tools load on first use.
 
 ## Quick start
 
@@ -100,14 +102,14 @@ save this thesis to vault
 
 ## What you get
 
-**116 tools** across four pillars:
+**133 tools** across four pillars:
 
 | Pillar | What it does |
 |--------|----------------|
 | **Memory** | Full-text searchable memory + versioned vault + chronicle |
 | **Agents** | Spawn, recall, update named agents — `agent_recall` also pulls related memory/vault context matching the agent's goal, not just its own logged updates |
 | **Workflows** | Automations, monitors, packets, deep research (auto-saves reports + auto-links related past research) |
-| **Execution** | Base DeFi, Robinhood Chain, market data, web, GitHub |
+| **Execution** | Base DeFi, Robinhood Chain, Solana (Jupiter swaps, SPL sends, pump.fun launches), market data, web, GitHub |
 
 Coding and research sessions persist the same way: `deep_research` auto-saves its report to vault and links it to related past reports; `code_session_save` does the same for coding/debugging sessions (`vault_save type=code`, versioned per project, auto-linked). Both exist so the next session — yours or another agent's — starts with real context instead of cold.
 
@@ -124,7 +126,7 @@ Default palette is `core` (lighter context). Full set:
 Finch is the runtime. **Your LLM is the brain. Your data stays yours.**
 
 ```bash
-npx -y -p @finchagentic/mcp@4.6.1 finch setup
+npx -y -p @finchagentic/mcp@4.9.0 finch setup
 # enable local vault (and optional local memory)
 ```
 
@@ -136,6 +138,74 @@ npx -y -p @finchagentic/mcp@4.6.1 finch setup
 | Brain | your MCP client’s model |
 
 Scheduled/cloud features still need an account. Core memory, vault, and public-data tools work offline of Finch cloud.
+
+## Solana tools (`sol_*`, in the `defi` palette)
+
+| Tool | What it does |
+|------|--------------|
+| `sol_wallet` | Public address of the local Solana wallet (`~/.finch/solana-wallet.json`, mode 600, AES-256-GCM; created on first use; secret never returned) |
+| `sol_balance` | SOL + SPL balances (Token and Token-2022). Defaults to the local wallet |
+| `sol_token_info` | Name/symbol/decimals/price/liquidity/mcap via Jupiter + DexScreener |
+| `sol_quote` | Jupiter quote (exact BigInt amounts; `SOL`/`USDC`/`USDT`/`FINCH` symbols) |
+| `sol_swap` | Jupiter swap, signed locally. Estimate only unless `confirmed: true`; rejects price impact > 5% |
+| `sol_send` | Send SOL or an SPL token. Preview unless `confirmed: true` |
+| `sol_launch_token` | pump.fun launch (image + metadata upload, optional dev buy). Preview unless `confirmed: true`; needs `devBuySol + 0.03` SOL |
+
+**Spending is default-deny:** `sol_swap`/`sol_send`/`sol_launch_token` only execute when the operator sets `FINCH_SOL_ALLOW_SPEND=1` (per-call caps: `FINCH_SOL_MAX_SEND_SOL` default 1, `FINCH_SOL_MAX_SWAP_SOL` default 5). Swap/launch transactions are verified (program allowlist, lookup tables, simulation) before signing.
+
+Set `FINCH_SOLANA_RPC_URL` for a private RPC (the URL/key is never echoed in tool output). `$FINCH` on Solana: `4LKS9yUYaBEZyzsaExmFXcWbG9pDBX7AWhseigVYpump`. See [docs/solana.md](docs/solana.md).
+
+## Launchpad tools (`launchpad_*`, in the `defi` palette)
+
+Launch and trade tokens on the **Finch launchpad** (Base, Robinhood Chain and Solana). Every launch also gets an AI founder that builds
+a real web product, funded by the coin's trading fees. The wallet is **local** (`~/.finch/wallet.json`); the key never leaves
+your machine and no tool returns it.
+
+| Tool | What it does |
+|---|---|
+| `launchpad_wallet` | Local EVM address, ETH on Base + Robinhood, spend-gate state and caps (creates the wallet on first use) |
+| `launchpad_pairs` | What a token can be paired with on each chain, and the fee split |
+| `launchpad_launches` | Browse launches (`new`, `mcap`, `volume`, `gainers`, `holders`) |
+| `launchpad_token` | Price, market cap, volume, holders, and the AI founder (status, version, product URL) |
+| `launchpad_launch_token` | Launch a token. Preview unless `confirmed: true` |
+| `launchpad_buy` / `launchpad_sell` | Trade a launched token through Uniswap v4. Preview, then confirm with the returned `quoteId` |
+
+**Fee split of a new launch (written into the locker at launch, permanent):** 90% of trading fees fund the AI founder's budget
+wallet, 10% go to you, 0% to Finch. `burn` and 0%-fee launches route nothing to the agent; a quote that cannot fund the agent keeps
+100% with you (the preview says which applies).
+
+**Safety**
+- Spending is **default-deny**: set `FINCH_LAUNCHPAD_ALLOW_SPEND=1` to allow `launchpad_launch_token`, `launchpad_buy`, `launchpad_sell`.
+- Caps per call: `FINCH_LAUNCHPAD_MAX_BUY_ETH` (default 0.05), `FINCH_LAUNCHPAD_MAX_BUY_USDG` (default 100), `FINCH_LAUNCHPAD_MAX_GAS_ETH` (default 0.01). Junk values fail closed.
+- Before signing a launch the tool checks the server's answer field by field (launcher, factory, locker, tick, fee, and that the
+  recipients are exactly the expected split) and simulates the transaction; a tampered response is refused and nothing is sent.
+- Trades: slippage default 1% (ceiling 5%), price impact above 5% refused, the transaction is simulated before it is sent.
+- To move ETH out of the wallet use `base_mcp_send`.
+
+### Solana (`chain: "solana"`)
+
+Solana is not a copy of the EVM flow:
+
+- **Reads** (`launchpad_pairs`, `launchpad_launches`, `launchpad_token`): SOL-denominated; pass the exact, case-sensitive base58 mint.
+- **Launch executes in your Finch account, not your local wallet.** A Solana launch creates a 1B-supply SPL mint (9 decimals, mint
+  authority revoked) and a single-sided Meteora DAMM v2 pool priced by `startingMarketCapSol` (whole SOL, default 30). It costs about
+  **0.025 SOL** of rent and fees, paid by your **Finch custodial Solana wallet**. The agent's share is not split by a contract:
+  Finch's fee-claim job claims LP fees from that Finch wallet, sends 90% to the coin's AI founder and leaves 10% with you; Finch takes 0%.
+  Launching from a local wallet would never fund the AI founder, so the tool does not do it.
+  - **It needs `finch login`** (a real session token: `FINCH_SESSION_TOKEN` or the token cached by `finch login`). A `FINCH_API_KEY`
+    or a wallet signature is not enough; without a session the tool stops with a "run `finch login`" error before contacting the launch route.
+  - The preview shows your Finch Solana wallet address and its SOL balance so you can fund it (`GET /launchpad/solana/wallet`).
+  - Optional `boostSol` deposits SOL into the AI founder's budget. `FINCH_LAUNCHPAD_MAX_SOL_LAUNCH` (default 0.5 SOL) caps boost + rent.
+  - It is a server-side action and is **never retried**. If the response is lost, check `launchpad_token` and your Finch wallet before trying again.
+- **Buy / sell use your LOCAL Solana wallet** (`sol_wallet`, `~/.finch/solana-wallet.json`) with a direct Meteora cp-amm swap
+  (Jupiter refuses fresh Finch pools). The instruction builders and the quote math are byte-for-byte ports of Finch's backend
+  (parity tests import the backend modules). Only Finch-launched mints are accepted (checked via `launchpad_token`, and the pool is
+  verified on-chain: owned by cp-amm, WSOL + your token). The transaction is checked to contain exactly the planned instructions,
+  only cp-amm / token / ATA / system / compute-budget programs, and is simulated: SOL leaving the wallet is capped at input + 0.01 SOL.
+  Slippage default 1% (ceiling 5%), price impact above 5% refused, quote drift above 0.5% between preview and execution refused,
+  per-buy cap `FINCH_LAUNCHPAD_MAX_BUY_SOL` (default 0.5). Same default-deny `FINCH_LAUNCHPAD_ALLOW_SPEND=1`.
+- Not yet proven: no Solana transaction has been sent through these tools; buy/sell are covered by mocks, byte parity with the backend
+  and read-only mainnet simulation only.
 
 ## Configuration
 
@@ -150,27 +220,42 @@ Scheduled/cloud features still need an account. Core memory, vault, and public-d
 | `FIRECRAWL_API_KEY` | Better crawl quality (optional) |
 | `GITHUB_TOKEN` | For `github_search_code` |
 | `ALCHEMY_API_KEY` | Faster Base RPC (optional) |
+| `FINCH_SOL_ALLOW_SPEND` | Set to `1` to let `sol_swap`/`sol_send`/`sol_launch_token` execute (default: disabled). Caps: `FINCH_SOL_MAX_SEND_SOL` (1), `FINCH_SOL_MAX_SWAP_SOL` (5) |
+| `FINCH_SOLANA_RPC_URL` | Solana RPC for `sol_*` tools (default `https://api.mainnet-beta.solana.com`) |
 
-**Cost model:** almost everything is free to run — the other 110 tools are plain API/RPC calls, and your MCP client's own model (Claude, GPT, whatever's driving the chat) does all the tool-selection reasoning at no cost to Finch. The 5 exceptions above need their own key because their reasoning happens *inside* the tool call, invisible to your client, and can't be delegated to it. Set exactly one of the four env vars and every tool that needs it will use it automatically.
+**Cost model:** almost everything is free to run — the other 127 tools are plain API/RPC calls, and your MCP client's own model (Claude, GPT, whatever's driving the chat) does all the tool-selection reasoning at no cost to Finch. The 5 exceptions above need their own key because their reasoning happens *inside* the tool call, invisible to your client, and can't be delegated to it. Set exactly one of the four env vars and every tool that needs it will use it automatically.
 
 Guided setup:
 
 ```bash
-npx -y -p @finchagentic/mcp@4.6.1 finch setup
+npx -y -p @finchagentic/mcp@4.9.0 finch setup
 ```
 
 ## Security
 
+Defaults are deny-by-default. Everything below is enforced in code and covered by tests (`test/spend-gate.test.ts` and friends).
+
 | # | Boundary | Rule |
 |:-:|----------|------|
-| 1 | Prompt injection | External content is data only — never instructions |
-| 2 | Mainnet confirm | Estimate → preview → confirm → execute |
-| 3 | Pinned install | Always `@finchagentic/mcp@4.6.1`, never `@latest` |
-| 4 | Credential vault | Never paste secrets into prompts or third-party tools |
-| 5 | Data disclosure | Know what leaves the machine (LLM, Firecrawl, GitHub, chain RPCs) |
-| 6 | Server monitors | Scheduled jobs need explicit confirmation |
-| 7 | Fund-moving confirm | `stake_finch`/`unstake_finch`/`base_mcp_send`/`base_mcp_swap`/`rh_mcp_swap` all require `confirm: true` |
-| 8 | Local wallet encryption | Set `FINCH_WALLET_PASSPHRASE` for a portable, passphrase-derived key — without it, the key derives from a random per-install secret + machine info, so the wallet file alone (without that secret file) isn't enough to decrypt it |
+| 1 | Prompt injection | Output of `web_scrape`, `web_search`, `deep_research`, `github_*` and `memory_search` is wrapped in `<untrusted_content source="…">` with a standing "data, not instructions" note; the fence cannot be closed from inside |
+| 2 | EVM spend is default-deny | Nothing leaves the local wallet unless the operator sets `FINCH_ALLOW_SPEND=1` in the MCP server env (Solana: `FINCH_SOL_ALLOW_SPEND=1`, launchpad: `FINCH_LAUNCHPAD_ALLOW_SPEND=1`) |
+| 3 | Preview-bound confirmation | `confirm:true` alone never spends. A preview call mints a single-use `quoteId` bound to the exact parameters; the executing call must repeat the same params with `confirm:true` + that `quoteId` |
+| 4 | Caps and allowlist | `FINCH_MAX_SPEND_USD_PER_CALL` (default $100), `FINCH_MAX_SPEND_USD_PER_DAY` (default $500, rolling 24h, bigint ledger in `~/.finch/spend-ledger.json`), optional `FINCH_SPEND_ALLOWLIST=0x…`. Unpriceable spends are refused (fail closed); ETH/USD is sanity-bounded |
+| 5 | Kill-switch | `FINCH_SPEND_DISABLED=1` or the file `~/.finch/spend.OFF` stops every spend immediately. Only the operator can release it |
+| 6 | Model can only tighten | `wallet_policy` can lower caps, narrow the allowlist and engage the kill-switch; it cannot raise, widen or release |
+| 7 | Unattended orders | `rh_dca_create`/`rh_bracket_create` need the same preview + `quoteId`; `rh_orders_tick` re-checks the kill-switch, enable flag and daily cap on every fill, uses integer wei accounting, and sanity-checks prices. A corrupt order book stops the tick rather than being overwritten |
+| 8 | Allowances | Exact-amount approvals only, spender/target allowlist, calldata validation and `eth_call` simulation before signing; `approvals_list` / `approvals_revoke` to audit and remove them |
+| 9 | Pinned install | Use an exact `@finchagentic/mcp@4.9.0` pin for anything with wallet access; `@latest` only for read-only trials |
+| 10 | Secrets | `vault_get_credential` is masked unless `reveal:true`, and is not marked auto-runnable. `~/.finch` is `0700`, files `0600`, writes are atomic; a corrupt config/index is backed up and never overwritten |
+| 11 | Wallet encryption | Set `FINCH_WALLET_PASSPHRASE` for a portable scrypt-derived key (existing keystores are migrated on first unlock). Without it the key derives from a random per-install secret + machine info |
+| 12 | Network egress | `web_scrape` refuses private/loopback/metadata addresses in any spelling (IPv4-mapped, NAT64, hex, decimal) and re-validates every redirect hop. BYOK provider keys are only sent to the official backend unless `FINCH_ALLOW_CUSTOM_BACKEND_BYOK=1` |
+| 13 | Premium tier | An API key unlocks premium tools only if the backend accepts it; otherwise hold ≥1 FINCH on Robinhood Chain |
+| 14 | Tool annotations | Fail closed: any tool without an explicit classification is reported as destructive so clients confirm first |
+| 15 | Credential vault | Never paste secrets into prompts or third-party tools |
+| 16 | Data disclosure | Know what leaves the machine (LLM, Firecrawl, GitHub, chain RPCs) |
+| 17 | Server monitors | Scheduled jobs need explicit confirmation |
+
+Presets for a smaller attack surface: `FINCH_TOOLS=solana-trader`, `launcher`, `research`, `defi`, `core`, `memory`, `coder` (comma-combinable).
 
 ## Troubleshooting
 

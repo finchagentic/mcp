@@ -37,7 +37,8 @@ describe("execution guards — confirmation required", () => {
     });
 
     expect(r?.isError).toBe(true);
-    expect(text(r)).toContain("cannot be");
+    // Default-deny (FINCH_ALLOW_SPEND unset) now refuses even before asking for confirmation.
+    expect(text(r)).toContain("NOT EXECUTED");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -215,7 +216,7 @@ describe("fund-moving stake/claim tools require confirmation", () => {
     const r = await handleRhMcpTool("rh_mcp_swap", { fromToken: "ETH", toToken: "USDG", amount: "1" });
 
     expect(r?.isError).toBe(true);
-    expect(text(r)).toContain("confirm");
+    expect(text(r)).toContain("NOT EXECUTED");
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

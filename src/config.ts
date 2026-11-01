@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { ensurePrivateDir, writePrivateJson, chmodPrivate } from "./secure-fs.js";
 
 const CONFIG_DIR  = path.join(os.homedir(), ".finch");
 const LEGACY_DIR  = path.join(os.homedir(), ".finch");
@@ -64,11 +65,28 @@ export function readConfig(): FinchConfig {
   return {};
 }
 
+/** Strict read for the write path: absent -> {}, corrupt -> back the file up and throw (never overwrite it). */
+function readConfigForWrite(): FinchConfig {
+  for (const file of [CONFIG_FILE, LEGACY_FILE]) {
+    if (!fs.existsSync(file)) continue;
+    try {
+      const v = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (v && typeof v === "object" && !Array.isArray(v)) return v;
+      throw new Error("config is not a JSON object");
+    } catch (e: any) {
+      let bak = `${file}.corrupt-${Date.now()}`;
+      try { fs.copyFileSync(file, bak); chmodPrivate(bak); } catch { bak = "(backup failed)"; }
+      throw new Error(`${file} is corrupt (${e?.message ?? e}). Not overwriting it; a copy was saved to ${bak}. Fix or delete the file, then retry.`);
+    }
+  }
+  return {};
+}
+
 export function writeConfig(patch: Partial<FinchConfig>): void {
-  const current = readConfig();
+  const current = readConfigForWrite();
   const updated  = { ...current, ...patch };
-  if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(updated, null, 2), { mode: 0o600 });
+  ensurePrivateDir(CONFIG_DIR);
+  writePrivateJson(CONFIG_FILE, updated);
 }
 
 export function getSavedToken(): string | undefined {

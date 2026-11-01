@@ -1,11 +1,12 @@
 {
   "name": "@finchagentic/mcp",
-  "version": "4.7.2",
+  "version": "4.9.0",
   "description": "The runtime layer for Agentic AI. Persistent memory, autonomous agents, and workflows that survive every session.",
   "main": "dist/index.js",
   "bin": {
     "finch": "dist/cli.js",
-    "finch-mcp": "dist/index.js"
+    "finch-mcp": "dist/index.js",
+    "mcp": "dist/index.js"
   },
   "preferGlobal": true,
   "scripts": {
@@ -50,9 +51,10 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@solana/web3.js": "^1.99.0",
     "ethers": "^6.17.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

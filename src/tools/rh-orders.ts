@@ -17,6 +17,9 @@ import { ethers } from "ethers";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
 import { getOrCreateWallet } from "../wallet.js";
+import { ensurePrivateDir, writePrivateJson, readJsonStrict, finchDir } from "../secure-fs.js";
+import { gateSpend, gateUnattended, markTrusted, ethUsdPrice, usdMicrosFor } from "../spend-gate.js";
+import { RH_CHAIN_ID } from "./rh-mcp.js";
 import {
   RH_EXPLORER,
   resolveTokenSmart,
@@ -25,7 +28,7 @@ import {
   handleRhMcpTool,
 } from "./rh-mcp.js";
 
-const ORDERS_DIR = path.join(os.homedir(), ".finch");
+const ORDERS_DIR = finchDir();
 const ORDERS_FILE = path.join(ORDERS_DIR, "rh-orders.json");
 const KILL_FILE = path.join(ORDERS_DIR, "rh-orders.OFF");
 
@@ -36,7 +39,8 @@ interface DcaLeg {
   completedBuys: number;
   nextRunAt: number; // epoch ms
   maxSpendEth: string; // hard cap (human ETH)
-  spentEth: string; // accumulated (human ETH)
+  spentEth: string; // accumulated (human ETH) — display/back-compat; spentWei is authoritative
+  spentWei?: string; // accumulated, integer wei (bigint-safe)
   fills: Array<{ ts: number; txHash: string; amountEth: string }>;
 }
 
@@ -72,27 +76,30 @@ function textResult(text: string, isError = false): ToolResult {
 }
 
 function loadStore(): OrderStore {
+  // Strict: only an ABSENT file yields an empty store. A corrupt store throws so we never overwrite live orders.
+  let s: OrderStore;
   try {
-    const raw = fs.readFileSync(ORDERS_FILE, "utf8");
-    const s = JSON.parse(raw) as OrderStore;
-    if (s && Array.isArray(s.orders)) return s;
-  } catch {
-    /* fresh store */
+    s = readJsonStrict<OrderStore>(ORDERS_FILE, { version: 1, orders: [] });
+  } catch (e: any) {
+    throw new Error(`${ORDERS_FILE} is unreadable/corrupt (${e?.message ?? e}); refusing to continue so it is not overwritten. Fix or restore it by hand.`);
   }
-  return { version: 1, orders: [] };
+  if (!s || !Array.isArray(s.orders)) {
+    throw new Error(`${ORDERS_FILE} is malformed (no orders array); refusing to continue so it is not overwritten.`);
+  }
+  return s;
 }
 
 function saveStore(s: OrderStore): void {
-  try {
-    fs.mkdirSync(ORDERS_DIR, { recursive: true });
-  } catch {
-    /* ignore */
-  }
-  // Atomic write: a crash mid-write must not corrupt the order store.
-  const tmp = `${ORDERS_FILE}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(s, null, 2));
-  fs.renameSync(tmp, ORDERS_FILE);
+  // Atomic, private (0600) write: a crash mid-write must not corrupt the order store.
+  writePrivateJson(ORDERS_FILE, s);
 }
+
+/** Authoritative spent-so-far in wei (migrates legacy float-string spentEth). */
+function dcaSpentWei(d: DcaLeg): bigint {
+  if (d.spentWei != null) { try { return BigInt(d.spentWei); } catch { /* fall through */ } }
+  try { return ethers.parseEther(Number(d.spentEth).toFixed(18)); } catch { return 0n; }
+}
+function eth2wei(v: string): bigint { return ethers.parseEther(Number(v).toFixed(18)); }
 
 function genId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
@@ -112,13 +119,13 @@ const LOCK_STALE_MS = 5 * 60 * 1000; // a tick this slow is presumed crashed, no
 
 function acquireTickLock(): boolean {
   try {
-    fs.mkdirSync(ORDERS_DIR, { recursive: true });
+    ensurePrivateDir(ORDERS_DIR);
   } catch {
     /* ignore */
   }
   try {
     // Exclusive create - atomically fails if another tick already holds it.
-    fs.writeFileSync(TICK_LOCK_FILE, String(process.pid), { flag: "wx" });
+    fs.writeFileSync(TICK_LOCK_FILE, String(process.pid), { flag: "wx", mode: 0o600 });
     return true;
   } catch {
     try {
@@ -203,6 +210,8 @@ export const RH_ORDER_TOOLS: Tool[] = [
         },
         slippagePct: { type: "number", description: "Slippage % per buy (default 3.0)" },
         note: { type: "string", description: "Optional label" },
+        confirm: { type: "boolean", description: "Must be true AND accompanied by the quoteId from the preview" },
+        quoteId: { type: "string", description: "quoteId returned by the preview of these exact parameters" },
       },
       required: ["token", "amountEthPerBuy", "intervalHours", "totalBuys"],
     },
@@ -225,6 +234,8 @@ export const RH_ORDER_TOOLS: Tool[] = [
         sellPct: { type: "number", description: "Percent of balance to sell on trigger (default 100)" },
         slippagePct: { type: "number", description: "Slippage % on the sell (default 5.0)" },
         note: { type: "string", description: "Optional label" },
+        confirm: { type: "boolean", description: "Must be true AND accompanied by the quoteId from the preview" },
+        quoteId: { type: "string", description: "quoteId returned by the preview of these exact parameters" },
       },
       required: ["token"],
     },
@@ -322,6 +333,15 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
         );
       }
 
+      const dcaGate = await gateSpend({
+        tool: "rh_dca_create", chainId: RH_CHAIN_ID, arming: true,
+        params: { token: resolved.address, amountEthPerBuy: String(amountEth), intervalHours, totalBuys, maxSpendEth: String(maxSpendEth), slippagePct: a.slippagePct },
+        usd: async () => usdMicrosFor(eth2wei(String(amountEth)), 18, await ethUsdPrice()),
+        confirm: a.confirm, quoteId: a.quoteId,
+        summary: `Arm DCA: ${amountEth} ETH → ${resolved.symbol} (${resolved.address}) every ${intervalHours}h, ${totalBuys}×, total cap ${maxSpendEth} ETH. Executes unattended once a scheduler ticks.`,
+      });
+      if (!dcaGate.ok) return dcaGate.result;
+
       const now = Date.now();
       const order: RhOrder = {
         id: genId("rho"),
@@ -340,6 +360,7 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
           nextRunAt: now, // first buy on the next tick
           maxSpendEth: String(maxSpendEth),
           spentEth: "0",
+          spentWei: "0",
           fills: [],
         },
       };
@@ -379,6 +400,14 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
         return textResult(`Token resolve failed: ${e?.message ?? e}`, true);
       }
       if (resolved.kind !== "token") return textResult("token must be a stock/crypto, not ETH", true);
+
+      const brGate = await gateSpend({
+        tool: "rh_bracket_create", chainId: RH_CHAIN_ID, arming: true,
+        params: { token: resolved.address, tpPriceUsd: tp, slPriceUsd: sl, sellPct, slippagePct: a.slippagePct },
+        confirm: a.confirm, quoteId: a.quoteId,
+        summary: `Arm TP/SL on ${resolved.symbol} (${resolved.address}): ${tp != null ? "TP $" + tp : ""} ${sl != null ? "SL $" + sl : ""}, sell ${sellPct}% on trigger. Executes unattended once a scheduler ticks.`,
+      });
+      if (!brGate.ok) return brGate.result;
 
       const entry = await rhPriceUsd(resolved.address);
       const now = Date.now();
@@ -487,8 +516,9 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
             report.push(`⏳ ${o.id} DCA ${o.token.symbol}: next buy at ${new Date(d.nextRunAt).toISOString()}`);
             continue;
           }
-          const wouldSpend = Number(d.spentEth) + Number(d.amountEthPerBuy);
-          if (wouldSpend > Number(d.maxSpendEth) + 1e-12) {
+          const perBuyWei = eth2wei(d.amountEthPerBuy);
+          const wouldSpend = dcaSpentWei(d) + perBuyWei;
+          if (wouldSpend > eth2wei(d.maxSpendEth)) {
             o.status = "completed";
             report.push(`✅ ${o.id} DCA ${o.token.symbol}: maxSpend reached — completed`);
             continue;
@@ -500,15 +530,27 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
             );
             continue;
           }
-          const res = await handleRhMcpTool("rh_mcp_swap", {
+          const ug = await gateUnattended(
+            "rh_orders_tick:dca",
+            usdMicrosFor(perBuyWei, 18, await ethUsdPrice()), // throws if ETH/USD fails sanity -> caught per-order
+            perBuyWei,
+          );
+          if (!ug.ok) {
+            o.lastError = String(ug.result.content?.[0]?.text ?? "gated").slice(0, 140);
+            o.updatedAt = now;
+            report.push(`⛔ ${o.id} DCA not executed: ${o.lastError}`);
+            continue;
+          }
+          const res = await handleRhMcpTool("rh_mcp_swap", markTrusted({
             fromToken: "ETH",
             toToken: o.token.address,
             amount: d.amountEthPerBuy,
             maxSlippagePct: o.slippagePct,
             confirm: true,
-          });
+          }));
           const txt = res?.content?.[0]?.text ?? "";
           if (res?.isError) {
+            ug.reservation?.release();
             o.lastError = txt.slice(0, 140);
             o.updatedAt = now;
             report.push(`🔴 ${o.id} DCA buy failed: ${o.lastError}`);
@@ -517,7 +559,10 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
           const txHash = extractTxHash(txt) ?? "unknown";
           d.fills.push({ ts: now, txHash, amountEth: d.amountEthPerBuy });
           d.completedBuys += 1;
-          d.spentEth = String(Number(d.spentEth) + Number(d.amountEthPerBuy));
+          const newSpent = dcaSpentWei(d) + perBuyWei;
+          d.spentWei = newSpent.toString();
+          d.spentEth = ethers.formatEther(newSpent);
+          ug.reservation?.commit(txHash);
           d.nextRunAt = now + d.intervalSec * 1000; // no burst catch-up
           o.lastError = undefined;
           o.updatedAt = now;
@@ -525,6 +570,7 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
           report.push(
             `🟢 ${o.id} DCA bought ${d.amountEthPerBuy} ETH → ${o.token.symbol} · ${d.completedBuys}/${d.totalBuys} · tx \`${txHash}\``
           );
+          saveStore(store); // persist after EACH fill so a later crash cannot cause a re-buy
           continue;
         }
 
@@ -534,6 +580,15 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
           const price = await rhPriceUsd(o.token.address);
           if (price == null) {
             report.push(`⚠️ ${o.id} TP/SL ${o.token.symbol}: no price available`);
+            continue;
+          }
+          try {
+            if (!Number.isFinite(price) || price <= 0) throw new Error("non-positive price");
+            if (b.entryPriceUsd && b.entryPriceUsd > 0 && (price / b.entryPriceUsd > 1000 || price / b.entryPriceUsd < 0.001)) {
+              throw new Error(`price ${price} is >1000x away from entry ${b.entryPriceUsd}`);
+            }
+          } catch (e: any) {
+            report.push(`⚠️ ${o.id} TP/SL ${o.token.symbol}: price failed sanity check (${e.message}) — skipped`);
             continue;
           }
           let trigger: "tp" | "sl" | null = null;
@@ -561,13 +616,21 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
             );
             continue;
           }
-          const res = await handleRhMcpTool("rh_mcp_swap", {
+          // Risk-reducing exit: enable flag + kill-switch apply, spend caps do not.
+          const ug = await gateUnattended("rh_orders_tick:bracket", 0n, 0n, { skipCaps: true });
+          if (!ug.ok) {
+            o.lastError = String(ug.result.content?.[0]?.text ?? "gated").slice(0, 140);
+            o.updatedAt = now;
+            report.push(`⛔ ${o.id} ${trigger.toUpperCase()} not executed: ${o.lastError}`);
+            continue;
+          }
+          const res = await handleRhMcpTool("rh_mcp_swap", markTrusted({
             fromToken: o.token.address,
             toToken: "ETH",
             amount: sellHuman,
             maxSlippagePct: o.slippagePct,
             confirm: true,
-          });
+          }));
           const txt = res?.content?.[0]?.text ?? "";
           if (res?.isError) {
             o.lastError = txt.slice(0, 140);
@@ -583,6 +646,7 @@ export async function handleRhOrderTool(name: string, args: unknown): Promise<To
           report.push(
             `🟢 ${o.id} ${trigger.toUpperCase()} sold ${sellHuman} ${o.token.symbol} → ETH at ${fmtUsd(price)} · tx \`${txHash}\``
           );
+          saveStore(store);
           continue;
         }
        } catch (e: any) {

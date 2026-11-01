@@ -117,7 +117,7 @@ function buildEntry(style: McpClient["entryStyle"]): Record<string, unknown> {
 // mcp.json and Zed settings.json are JSONC and routinely contain comments,
 // which JSON.parse rejects). In that case we leave the file untouched and the
 // caller prints a manual-add snippet instead.
-function installIntoConfig(client: McpClient): "added" | "updated" | "error" | "skipped" {
+export function installIntoConfig(client: McpClient): "added" | "updated" | "error" | "skipped" {
   try {
     let json: any = {};
 
@@ -136,9 +136,20 @@ function installIntoConfig(client: McpClient): "added" | "updated" | "error" | "
     const key = client.serversKey;
     if (!json[key] || typeof json[key] !== "object") json[key] = {};
     const existed = !!json[key].finch;
-    json[key].finch = buildEntry(client.entryStyle);
+    // Merge: keep any env (API keys, FINCH_ALLOW_SPEND, ...) and extra fields the user already set.
+    const prev = json[key].finch && typeof json[key].finch === "object" ? json[key].finch : {};
+    const fresh = buildEntry(client.entryStyle) as Record<string, any>;
+    json[key].finch = { ...prev, ...fresh, env: { ...(prev.env && typeof prev.env === "object" ? prev.env : {}), ...fresh.env } };
 
-    fs.writeFileSync(client.configPath, JSON.stringify(json, null, 2), "utf8");
+    if (fs.existsSync(client.configPath)) {
+      try { fs.copyFileSync(client.configPath, `${client.configPath}.bak`); } catch { /* best effort */ }
+    }
+    // Atomic write: tmp + rename, preserving the original file mode.
+    let mode = 0o600;
+    try { mode = fs.statSync(client.configPath).mode & 0o777; } catch { /* new file */ }
+    const tmp = `${client.configPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(json, null, 2), { encoding: "utf8", mode });
+    fs.renameSync(tmp, client.configPath);
     return existed ? "updated" : "added";
   } catch {
     return "error";

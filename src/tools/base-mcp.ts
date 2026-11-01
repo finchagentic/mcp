@@ -47,6 +47,7 @@ export const BASE_MCP_TOOLS: Tool[] = [
         to: { type: "string", description: "Destination - 0x address or Base basename (e.g. jesse.base.eth)" },
         amount: { type: "string", description: "Human-readable amount, e.g. '0.01' or '50'" },
         confirm: { type: "boolean", description: "Must be true to broadcast. Guards against sending funds without the user's agreement." },
+        quoteId: { type: "string", description: "Required with confirm:true. Returned by the preview call (same params, confirm omitted/false); single use." },
       },
       required: ["token", "to", "amount", "confirm"],
     },
@@ -70,6 +71,7 @@ export const BASE_MCP_TOOLS: Tool[] = [
         maxSlippagePct: { type: "number", description: "Max slippage tolerance in % (default 1.0). Passed to 0x router." },
         maxPriceImpactPct: { type: "number", description: "Hard ceiling on price impact in % (default 3.0). Swap is refused above this." },
         confirm: { type: "boolean", description: "Must be true to broadcast. Guards against swapping without the user's agreement." },
+        quoteId: { type: "string", description: "Required with confirm:true. Returned by the preview call (same params, confirm omitted/false); single use." },
       },
       required: ["fromToken", "toToken", "amount", "confirm"],
     },
@@ -334,31 +336,6 @@ async function resolveBasename(input: string): Promise<{ address?: string; name?
 
 // ── Handler ─────────────────────────────────────────────────────────────────
 
-/**
- * Broadcasting tools take a second, explicit step.
- *
- * `base_mcp_send` and `base_mcp_swap` sign and broadcast from the user's wallet
- * on the first call — an on-chain transfer that cannot be recalled. The chain's
- * own swap tool (`rh_mcp_swap`) already required confirmation, as does
- * `vault_delete`; these two were the outliers, moving real
- * funds with less friction than an irreversible delete. The guard also gives the
- * model somewhere to stop when a destination address came from a scraped page
- * or tool output rather than from the user.
- */
-function requireConfirm(a: any, what: string): ToolResult | null {
-  if (a?.confirm === true) return null;
-  return {
-    content: [{
-      type: "text",
-      text:
-        `Refusing to ${what}: this signs and broadcasts from the user's wallet and **cannot be ` +
-        `undone**. Show the user the exact token, amount and destination, get their agreement, ` +
-        `then pass \`confirm: true\`.`,
-    }],
-    isError: true,
-  };
-}
-
 export async function handleBaseMcpTool(name: string, args: unknown): Promise<ToolResult | null> {
   const a = (args ?? {}) as any;
 
@@ -405,8 +382,7 @@ export async function handleBaseMcpTool(name: string, args: unknown): Promise<To
       if (!a.token || !a.to || !a.amount) {
         return { content: [{ type: "text", text: "Required: token, to, amount" }], isError: true };
       }
-      const blocked = requireConfirm(a, "send");
-      if (blocked) return blocked;
+      // Confirmation + quoteId binding are enforced by the spend gate inside send_token.
       // Resolve basename if needed
       let toAddress = a.to;
       if (typeof a.to === "string" && !/^0x[a-fA-F0-9]{40}$/.test(a.to)) {
@@ -419,13 +395,13 @@ export async function handleBaseMcpTool(name: string, args: unknown): Promise<To
         }
         toAddress = resolved.address;
       }
-      return handleDefiTool("send_token", { token: a.token, toAddress, amount: a.amount });
+      return handleDefiTool("send_token", { token: a.token, toAddress, amount: a.amount, confirm: a.confirm === true, quoteId: a.quoteId });
     }
 
     case "base_mcp_swap": {
-      const blocked = requireConfirm(a, "swap");
-      if (blocked) return blocked;
       return handleDefiTool("swap_tokens", {
+        confirm: a.confirm === true,
+        quoteId: a.quoteId,
         fromToken: a.fromToken,
         toToken: a.toToken,
         amount: a.amount,

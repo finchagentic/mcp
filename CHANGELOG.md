@@ -16,7 +16,85 @@ All notable changes to **@finchagentic/mcp** are documented in this file.
 ### Notes
 - Historical entries below may still mention Finch package names for accuracy of past releases.
 
+## [4.9.0] — Launchpad tools + security hardening (unreleased)
+
+### Security hardening (4.9.0)
+
+**Breaking / behaviour changes**
+- EVM spending from the local wallet is now **default-deny**: set `FINCH_ALLOW_SPEND=1` to enable `base_mcp_send`, `base_mcp_swap`, `rh_mcp_swap`, `rh_dca_create`, `rh_bracket_create` and unattended `rh_orders_tick` fills.
+- Executing a spend requires `confirm:true` **and** the single-use `quoteId` from a preview of the same parameters. `confirm:true` alone only returns a preview.
+- `vault_get_credential` is masked unless `reveal:true`; it is no longer annotated read-only.
+- Unclassified tools are annotated destructive (fail closed). A non-empty `FINCH_API_KEY` no longer unlocks premium tools by itself; the backend must accept it.
+- `FINCH_WALLET_PASSPHRASE` now feeds the keystore's scrypt KDF directly. Existing keystores (sha256-derived) are re-encrypted automatically on first unlock.
+
+**Added**
+- `src/spend-gate.ts`: kill-switch (`FINCH_SPEND_DISABLED`, `~/.finch/spend.OFF`), per-call / rolling-24h USD caps, recipient allowlist, bigint ledger, ETH/USD sanity bounds, unattended gate for the order engine.
+- `wallet_policy` (show / tighten / kill), `approvals_list`, `approvals_revoke`.
+- Presets `solana-trader`, `launcher`; `research` unchanged.
+- `<untrusted_content>` fencing for `web_scrape`, `web_search`, `deep_research`, `github_*`, `memory_search`.
+- Uniform `{ txHash, status, chainId }` structured result on every money-moving tool.
+- `src/constants.ts`: single source for the FINCH contract (Robinhood Chain ERC-20).
+
+**Fixed**
+- `rh_orders_tick`: bigint wei accounting, price sanity, store persisted after each fill, strict store loading (corrupt file no longer treated as empty and overwritten).
+- `~/.finch` directories `0700`, files `0600` (existing ones are tightened); atomic writes everywhere; corrupt `config.json`, vault and memory indexes are no longer silently replaced.
+- `finch install` merges the existing `env` block, writes atomically and leaves a `.bak`; cron line quotes the log path; local-vault key directories use full sha256 (old directories still readable).
+- BYOK provider keys are not sent to a non-official `FINCH_CONVEX_URL` (warning printed).
+- Stale FINCH contract addresses (`0x4B52…9Ba3`, `0xce19…9824`) removed; token gate checks the Robinhood Chain ERC-20.
+- `web_scrape` follows redirects manually, re-checking each hop; private-address detection normalises IPv4-mapped, NAT64, 6to4, hex, octal and decimal forms.
+- Dependencies: `@modelcontextprotocol/sdk` 1.32.2, `zod` 4.6.7, `npm audit fix` (critical and high advisories cleared; remaining moderates listed in the release notes).
+
+### Launchpad
+
+### Added
+- `launchpad_wallet`, `launchpad_pairs`, `launchpad_launches`, `launchpad_token`: read the Finch launchpad (Base + Robinhood Chain).
+- `launchpad_launch_token`: launch with a local wallet. The server's prepare response is verified field by field before signing;
+  the permanent fee split is 90% AI founder / 10% you / 0% Finch.
+- `launchpad_buy`, `launchpad_sell`: Uniswap v4 trades with slippage, price-impact and quote-drift guards, simulated before sending.
+- Spending is default-deny (`FINCH_LAUNCHPAD_ALLOW_SPEND=1`) with per-call caps.
+
+- **Solana** (`chain: "solana"`) on the same tools:
+  - Reads show SOL amounts and the exact base58 mint.
+  - `launchpad_launch_token` runs in **your Finch account** (custodial Solana wallet, ~0.025 SOL rent) via `POST /launchpad/solana/launch`,
+    because Finch's fee-claim job (not a contract) routes 90% to the AI founder / 10% to you / 0% Finch from that wallet.
+    **Requires `finch login`** (a real session token; an API key or wallet signature is refused before the launch route is contacted).
+    The preview shows your Finch wallet and balance. Cap `FINCH_LAUNCHPAD_MAX_SOL_LAUNCH` (default 0.5 SOL, boost + rent); never retried.
+  - `launchpad_buy` / `launchpad_sell` use your **local** Solana wallet with a direct Meteora cp-amm swap built locally
+    (byte-parity with the backend builders and quote math, pool + Finch-launch verified, plan-vs-transaction check, program allowlist,
+    simulation cap of input + 0.01 SOL, slippage default 1% / ceiling 5%, impact > 5% and quote drift > 0.5% refused,
+    cap `FINCH_LAUNCHPAD_MAX_BUY_SOL` default 0.5).
+
+### Not yet proven
+- No transaction has been sent on mainnet through these tools (launch, buy, sell and Permit2 approvals are covered by
+  simulation and mocks only). Same for Solana: the launch route was exercised against mocks of Finch's response shape only.
+
+### Notes
+- `sol_launch_token` (pump.fun) is unchanged but its description now says it is legacy and points to `launchpad_launch_token` (`chain: "solana"`) for launching on Finch. It was added before Finch moved to its own Meteora launchpad.
+
+## [4.8.0] — Solana tools (unreleased) — security hardening after independent review
+
+### Security
+- **P0** Jupiter swap and pump.fun create transactions are verified before signing: fee payer, program allowlist, address-lookup-table resolution, banned System/Token instruction types, SOL-out caps, and a `simulateTransaction` balance check. Hostile transactions are refused and never sent.
+- Confirmation is bound to the previewed quote (`quoteId`); execution re-quotes and aborts on >0.5% worse min-received. `confirmed` must be boolean `true`.
+- Missing/non-finite `priceImpactPct` or missing `otherAmountThreshold` now throws. Slippage capped at 500 bps (1000 with `allowHighSlippage`).
+- Default-deny spend gate `FINCH_SOL_ALLOW_SPEND=1` plus `FINCH_SOL_MAX_SEND_SOL` / `FINCH_SOL_MAX_SWAP_SOL` caps.
+- `imageUrl` SSRF protections (https, DNS/IP checks, manual redirects, size cap, magic bytes); `metadataUri` host allowlist; JSON-quoted previews; description cap.
+- Wallet: scrypt KDF with per-file salt for new files (legacy files still readable), atomic fsync'd writes, dir 700, `.local-secret` never regenerated next to an existing wallet (also fixes the EVM wallet path).
+- Preflight SOL checks (fees, ATA rent, 0.01 SOL swap reserve), balance errors surfaced, Token-2022 transfer-fee/hook mints refused unless `allowToken2022Extensions:true`.
+
 ## [Unreleased]
+
+## [4.8.0] — 2026-10-12
+
+### Added
+- **Solana support** (`src/tools/solana.ts`, 7 tools, `defi` preset): `sol_wallet`, `sol_balance`, `sol_token_info`, `sol_quote`, `sol_swap`, `sol_send`, `sol_launch_token`. Jupiter (lite-api) quotes/swaps, SPL + Token-2022 balances and transfers, pump.fun launches via pumpportal. RPC from `FINCH_SOLANA_RPC_URL`.
+- Safety: fund-moving Solana tools do nothing without `confirmed: true`; `sol_swap` rejects >5% price impact; amounts are converted with BigInt (no floats); local Solana keypair is encrypted at rest (mode 600) and never returned or logged; RPC URLs are scrubbed from error text.
+- Dependency: `@solana/web3.js` ^1.99.
+
+### Changed (source re-synced with npm 4.7.4 / 4.7.5, which had been published without source)
+- `FINCH_API_KEY` / `FINCH_SESSION_TOKEN` env vars now always beat a stale cached `~/.finch/config.json` session token (`convex.ts`, `config.ts`); `getSavedToken()` is env-session → saved config again.
+- `finch_status` reports the credential actually in use ("API key" vs "session token") and recognises `FINCH_API_KEY`.
+- Added `mcp` bin alias (same entrypoint as `finch-mcp`).
 
 ## [4.6.1] — 2026-08-19
 

@@ -31,6 +31,8 @@ import {
   renderAnalysis,
 } from "./rh-mcp-risk.js";
 import { blockscoutSafety, assessSafety, buildRhSafetyStructured, renderSafety } from "./rh-mcp-safety.js";
+import { assertAllowedSpender, validateSwapTx, resolveSlippagePct } from "../evm-guard.js";
+import { gateSpend, isTrusted, ethUsdPrice, usdMicrosFor, moneyResult, parseAmountUnits } from "../spend-gate.js";
 import { quoteRh, ensureDirectApproval, ensureSellApprovals, confirmRhSwap, broadcastRhSwap } from "./rh-mcp-swap.js";
 
 export { RH_MCP_TOOLS } from "./rh-mcp-tools.js";
@@ -160,7 +162,7 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
                 v ? formatWei(v, q.to.decimals) : "no pool";
               return `Compared: V2 ${fmt(rc.v2)} · V3 ${fmt(rc.v3)} · V4 ${fmt(rc.v4)} → best wins`;
             })(),
-            `Slippage: ${a.maxSlippagePct ?? 2.0}%`,
+            `Slippage: ${resolveSlippagePct(a.maxSlippagePct)}%`,
             pool?.liquidityUsd != null ? `Pool liq (approx): $${Number(pool.liquidityUsd).toLocaleString()}` : "",
             ``,
             `Run \`rh_mcp_swap\` with same params + \`confirm: true\` to execute.`,
@@ -178,12 +180,26 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
       if (!a.fromToken || !a.toToken || !a.amount) {
         return textResult("Required: fromToken, toToken, amount, confirm", true);
       }
-      if (a.confirm !== true) {
-        return textResult(
-          "Refusing to broadcast: pass `confirm: true` after reviewing `rh_mcp_estimate`.",
-          true
-        );
+      // Internal calls from rh_orders_tick are pre-gated (unattended gate: kill-switch, enable flag, daily cap).
+      let reservation: { commit(h?: string): void; release(): void } | null = null;
+      if (!isTrusted(args)) {
+        const gate = await gateSpend({
+          tool: "rh_mcp_swap", chainId: RH_CHAIN_ID,
+          params: { fromToken: a.fromToken, toToken: a.toToken, amount: String(a.amount), maxSlippagePct: a.maxSlippagePct },
+          usd: async () => {
+            const from = await resolveTokenSmart(String(a.fromToken));
+            const raw = BigInt(parseAmountUnits(String(a.amount), from.decimals));
+            if (from.kind === "eth") return usdMicrosFor(raw, 18, await ethUsdPrice());
+            const px = await rhPriceUsd(from.address);
+            return px && px > 0 ? usdMicrosFor(raw, from.decimals, px) : null;
+          },
+          confirm: a.confirm, quoteId: a.quoteId,
+          summary: `Swap ${a.amount} ${String(a.fromToken).toUpperCase()} → ${String(a.toToken).toUpperCase()} on Robinhood Chain (${RH_CHAIN_ID}).`,
+        });
+        if (!gate.ok) return gate.result;
+        reservation = gate.reservation;
       }
+      let sent = false;
       try {
         const wallet = await getOrCreateWallet();
         const q = await quoteRh({
@@ -202,6 +218,7 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
           gas: quote.gas,
         };
         if (!tx?.to || !tx?.data) {
+          reservation?.release();
           return textResult("Quote missing transaction calldata.", true);
         }
 
@@ -213,6 +230,7 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
           q.to.symbol
         );
         if (priceWarn && a.acceptBadPrice !== true) {
+          reservation?.release();
           return textResult(
             `${priceWarn}\n\n**Refusing to broadcast.** If you truly intend to accept this ` +
               `rate, re-run with \`acceptBadPrice: true\`.`,
@@ -228,6 +246,10 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
           // Hardcoding the V4 path here silently broke every V2/V3 sell.
           const spender: string =
             quote.allowanceTarget ?? quote.issues?.allowance?.spender ?? RH_PERMIT2;
+          // Hard allowlist BEFORE any approval tx is sent: the quote's spender is untrusted.
+          assertAllowedSpender(RH_CHAIN_ID, spender);
+          // Validate the swap tx itself before spending gas/allowance on approvals.
+          validateSwapTx(tx, { chainId: RH_CHAIN_ID, wallet: wallet.address, maxValueWei: 0n });
           const hashes =
             spender.toLowerCase() === RH_PERMIT2.toLowerCase()
               ? await ensureSellApprovals(wallet, q.from.address, BigInt(q.sellAmount))
@@ -250,7 +272,12 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
           }
         }
 
-        const txHash = await broadcastRhSwap(wallet, tx);
+        let txHash: string;
+        try {
+          txHash = await broadcastRhSwap(wallet, tx, q.from.kind === "eth" ? BigInt(q.sellAmount) : 0n);
+        } catch (e) { reservation?.release(); throw e; }
+        sent = true;
+        reservation?.commit(txHash);
         const buyHuman = formatWei(quote.buyAmount ?? "0", q.to.decimals);
         const route = quote.route ?? "uniswap-v4";
         const rc = await confirmRhSwap(txHash, wallet.address, q.to, ethBefore);
@@ -268,7 +295,7 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
               })} ${q.to.symbol}** (quoted ~${buyHuman})`
             : `Quoted: ~${buyHuman} ${q.to.symbol}`;
 
-        return textResult(
+        return moneyResult(
           [
             header,
             ``,
@@ -294,9 +321,12 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
               : `_The transaction reverted. Funds stay in your wallet minus gas._`,
           ]
             .filter(Boolean)
-            .join("\n")
+            .join("\n"),
+          { txHash, status: !rc.mined ? "pending" : rc.ok ? "confirmed" : "reverted", chainId: RH_CHAIN_ID },
+          rc.mined && !rc.ok
         );
       } catch (e: any) {
+        if (!sent) reservation?.release();
         return textResult(`Swap failed: ${e?.message ?? e}`, true);
       }
     }

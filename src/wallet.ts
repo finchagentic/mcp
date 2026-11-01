@@ -3,6 +3,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
+import { ensurePrivateDir, hardenDir, writePrivateFile } from "./secure-fs.js";
+import { validateSwapTx, assertAllowedTarget, isAllowedSpender, simulateTx, PERMIT2 } from "./evm-guard.js";
 
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 
@@ -38,15 +40,51 @@ let _cachedWallet: ethers.Wallet | ethers.HDNodeWallet | null = null;
 
 export function clearWalletCache(): void { _cachedWallet = null; }
 
+export class LocalSecretMissingError extends Error {}
+// Set only while migrating a wallet we have ALREADY proven we can decrypt with a
+// legacy scheme; the only situation where minting a fresh .local-secret next to
+// an existing wallet file is safe.
+let _allowSecretCreation = false;
+
+function anyWalletFileExists(): boolean {
+  return fs.existsSync(WALLET_FILE) || fs.existsSync(path.join(WALLET_DIR, "solana-wallet.json"));
+}
+
 function getOrCreateLocalSecret(): string {
+  let readErr: any = null;
   try {
     const existing = fs.readFileSync(LOCAL_SECRET_FILE, "utf8").trim();
     if (existing) return existing;
-  } catch { /* doesn't exist yet, or unreadable - (re)create below */ }
+  } catch (e) { readErr = e; }
+  // Never silently regenerate the secret while a wallet file exists: every wallet
+  // encrypted with the old secret would become undecryptable (funds orphaned).
+  if (anyWalletFileExists() && !_allowSecretCreation) {
+    throw new LocalSecretMissingError(
+      `The per-install secret ${LOCAL_SECRET_FILE} is missing, empty or unreadable${readErr?.code ? ` (${readErr.code})` : ""}, but a wallet file already exists in ${WALLET_DIR}. ` +
+      "Refusing to generate a new secret because that would make the existing wallet(s) permanently undecryptable. " +
+      "Restore .local-secret from backup, or set FINCH_WALLET_PASSPHRASE to the passphrase the wallet was created with."
+    );
+  }
   const secret = crypto.randomBytes(32).toString("hex");
-  if (!fs.existsSync(WALLET_DIR)) fs.mkdirSync(WALLET_DIR, { recursive: true });
-  fs.writeFileSync(LOCAL_SECRET_FILE, secret, { mode: 0o600 });
+  ensurePrivateDir(WALLET_DIR);
+  fs.writeFileSync(LOCAL_SECRET_FILE, secret, { mode: 0o600, flag: "wx" });
   return secret;
+}
+
+/** Raw key material for NEW scrypt-protected files (Solana wallet). With a
+ *  passphrase the raw passphrase is used (no pre-hash truncation). */
+export function getKeyMaterial(): string {
+  const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
+  if (passphrase) return "pass:" + passphrase;
+  return "local:" + getOrCreateLocalSecret() + os.hostname() + os.platform() + os.arch();
+}
+
+/** Key for NEW EVM keystores. With a passphrase the raw passphrase goes to the keystore's scrypt KDF
+ *  (no fast pre-hash/truncation). Without one, the previous local-secret derivation is kept. */
+export function getWalletKey(): string {
+  const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
+  if (passphrase) return "pass:" + passphrase;
+  return getMachineKey();
 }
 
 export function getMachineKey(): string {
@@ -143,13 +181,18 @@ export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNode
 async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet> {
   if (_cachedWallet) return _cachedWallet;
   warnIfNoPassphrase();
+  hardenDir(WALLET_DIR);
   if (fs.existsSync(WALLET_FILE)) {
     const encrypted = fs.readFileSync(WALLET_FILE, "utf8");
     try {
-      const wallet = await ethers.Wallet.fromEncryptedJson(encrypted, getMachineKey());
+      const wallet = await ethers.Wallet.fromEncryptedJson(encrypted, getWalletKey());
       _cachedWallet = wallet;
       return wallet;
     } catch (currentErr: any) {
+      const migrateWith = async (w: ethers.Wallet | ethers.HDNodeWallet) => {
+        _allowSecretCreation = true; // decrypt already proven with a legacy key
+        try { return await w.encrypt(getWalletKey()); } finally { _allowSecretCreation = false; }
+      };
       // Fall back to the pre-fix machine-bound scheme, for wallets encrypted
       // before passphrases became portable. Only relevant on the ORIGINAL
       // machine (it still needs that machine's hostname/platform/arch) - it
@@ -160,6 +203,19 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
       // set when this file was encrypted) and "" (the common case - a user
       // setting FINCH_WALLET_PASSPHRASE for the first time, whose existing
       // file predates having any passphrase at all).
+      // Tier 0: keystores written before the raw-passphrase change used sha256(passphrase)[0:32] as the password.
+      if (process.env.FINCH_WALLET_PASSPHRASE) {
+        try {
+          const prevWallet = await ethers.Wallet.fromEncryptedJson(encrypted, getMachineKey());
+          _cachedWallet = prevWallet;
+          try {
+            const migrated = await migrateWith(prevWallet);
+            writePrivateFile(WALLET_FILE, migrated);
+            process.stderr.write(`\nRe-encrypted ${WALLET_FILE} with the raw passphrase (scrypt) scheme.\n\n`);
+          } catch { /* best effort; old key keeps working */ }
+          return prevWallet;
+        } catch { /* not this scheme - continue */ }
+      }
       const legacyCandidates = [...new Set([process.env.FINCH_WALLET_PASSPHRASE ?? "", ""])];
       let legacyWallet: ethers.Wallet | ethers.HDNodeWallet | null = null;
       for (const candidate of legacyCandidates) {
@@ -173,8 +229,8 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
         // Migrate in place to the portable scheme now that we've proven we
         // hold the right key, so this only ever needs to happen once.
         try {
-          const migrated = await legacyWallet.encrypt(getMachineKey());
-          fs.writeFileSync(WALLET_FILE, migrated, { mode: 0o600 });
+          const migrated = await migrateWith(legacyWallet);
+          writePrivateFile(WALLET_FILE, migrated);
           process.stderr.write(`\nMigrated ${WALLET_FILE} to the portable passphrase scheme.\n\n`);
         } catch {
           /* migration is best-effort - the legacy key still works next run either way */
@@ -190,8 +246,8 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
           const oldNoPassWallet = await ethers.Wallet.fromEncryptedJson(encrypted, getLegacyMachineOnlyKey());
           _cachedWallet = oldNoPassWallet;
           try {
-            const migrated = await oldNoPassWallet.encrypt(getMachineKey());
-            fs.writeFileSync(WALLET_FILE, migrated, { mode: 0o600 });
+            const migrated = await migrateWith(oldNoPassWallet);
+            writePrivateFile(WALLET_FILE, migrated);
             process.stderr.write(`\nMigrated ${WALLET_FILE} to the higher-entropy no-passphrase scheme.\n\n`);
           } catch {
             /* migration is best-effort - the legacy key still works next run either way */
@@ -220,8 +276,8 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
     }
   }
   const wallet = ethers.Wallet.createRandom();
-  if (!fs.existsSync(WALLET_DIR)) fs.mkdirSync(WALLET_DIR, { recursive: true });
-  const encrypted = await wallet.encrypt(getMachineKey());
+  ensurePrivateDir(WALLET_DIR);
+  const encrypted = await wallet.encrypt(getWalletKey());
   try {
     // Exclusive create ("wx") - guards the cross-process version of the race
     // the in-process mutex above already closes: two separate `finch`
@@ -235,7 +291,7 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
     // never sign with the wallet we generated in memory once it's clear it
     // isn't the one actually persisted to disk.
     const encryptedExisting = fs.readFileSync(WALLET_FILE, "utf8");
-    const existingWallet = await ethers.Wallet.fromEncryptedJson(encryptedExisting, getMachineKey());
+    const existingWallet = await ethers.Wallet.fromEncryptedJson(encryptedExisting, getWalletKey());
     _cachedWallet = existingWallet;
     return existingWallet;
   }
@@ -316,6 +372,14 @@ export async function waitForReceipt(
   return { mined: false };
 }
 
+export interface SignOpts {
+  /** "swap": tx.to must be an allowlisted router and calldata is validated. "transfer": caller built the calldata locally
+   *  and has verified it; tx.to is not router-checked. */
+  kind?: "swap" | "transfer";
+  /** Max native wei the tx may carry. Default 0 (an ETH-in swap/transfer must say so explicitly). */
+  maxValueWei?: bigint;
+}
+
 export async function signAndBroadcast(
   wallet: ethers.Wallet | ethers.HDNodeWallet,
   txData: {
@@ -326,15 +390,36 @@ export async function signAndBroadcast(
     gasPrice?: string;
     permit2?: any;
     issues?: any;
-  }
+  },
+  opts: SignOpts = {}
 ): Promise<string> {
+  const kind = opts.kind ?? "swap";
+  const maxValueWei = opts.maxValueWei ?? 0n;
+  if (kind === "swap") {
+    validateSwapTx(txData, { chainId: BASE_CHAIN_ID, wallet: wallet.address, maxValueWei });
+  } else if (BigInt(txData.value || "0") > maxValueWei) {
+    throw new Error("Transaction value exceeds the authorised amount. Refusing to sign.");
+  }
   let data = txData.data || "0x";
   if (txData.permit2?.eip712) {
     const eip712 = txData.permit2.eip712;
+    // The Permit2 signature authorises a token pull: bind it to the real Permit2 contract, this chain, and an
+    // allowlisted spender, otherwise a hostile quote could have us sign an approval for an attacker.
+    const dom = eip712.domain ?? {};
+    if (String(dom.verifyingContract ?? "").toLowerCase() !== PERMIT2.toLowerCase() || Number(dom.chainId) !== BASE_CHAIN_ID) {
+      throw new Error("Permit2 typed data targets the wrong contract/chain. Refusing to sign.");
+    }
+    const spender = eip712.message?.spender;
+    if (!spender || !isAllowedSpender(BASE_CHAIN_ID, spender)) {
+      throw new Error(`Permit2 typed data names spender ${spender} which is not allowlisted. Refusing to sign.`);
+    }
     const { EIP712Domain: _d, ...typesWithout } = eip712.types ?? {};
     const sig = await wallet.signTypedData(eip712.domain, typesWithout, eip712.message);
     data = data + sig.replace("0x", "");
   }
+  assertAllowedTargetIfSwap(kind, txData.to);
+  // Dry-run against current state; a tx that reverts in simulation is never signed.
+  await simulateTx(rpcPost, wallet.address, { to: txData.to, data, value: txData.value || "0" });
 
   const [nonce, gasPrice] = await Promise.all([getNonce(wallet.address), getGasPrice()]);
 
@@ -350,4 +435,8 @@ export async function signAndBroadcast(
 
   const signedTx = await wallet.signTransaction(tx);
   return broadcastTx(signedTx);
+}
+
+function assertAllowedTargetIfSwap(kind: string, to: string): void {
+  if (kind === "swap") assertAllowedTarget(BASE_CHAIN_ID, to);
 }

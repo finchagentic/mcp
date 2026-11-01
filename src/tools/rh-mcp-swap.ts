@@ -7,6 +7,7 @@ import { RH_PERMIT2, RH_UNIVERSAL_ROUTER, RH_CHAIN_ID } from "./rh-mcp-constants
 import { rhProviderAsync, rhRpc, parseHumanToWei } from "./rh-mcp-provider.js";
 import { resolveTokenSmart } from "./rh-mcp-resolve.js";
 import type { ResolvedToken } from "./rh-mcp-dex.js";
+import { assertAllowedSpender, validateSwapTx, simulateTx, resolveSlippagePct } from "../evm-guard.js";
 
 export async function quoteRh(args: {
   fromToken: string;
@@ -22,15 +23,8 @@ export async function quoteRh(args: {
     throw new Error("RH swaps route ETH ↔ token. Buy a token with ETH, or sell a token for ETH.");
   }
   const sellAmount = parseHumanToWei(args.amount, from.decimals);
-  const slippagePct = args.maxSlippagePct ?? 2.0;
-  // Same bound defi.ts's SwapSchema already enforces for Base swaps
-  // (.positive().max(50)) - this file had no equivalent check anywhere, so a
-  // negative or absurd value flowed straight through to the backend as
-  // slippageBps, both for direct rh_mcp_swap calls and for every unattended
-  // rh_orders_tick execution of a DCA/bracket order created with a bad value.
-  if (!(slippagePct > 0) || slippagePct > 50) {
-    throw new Error(`maxSlippagePct must be greater than 0 and at most 50 (got ${args.maxSlippagePct}).`);
-  }
+  // Default 1%, hard cap 5% (FINCH_MAX_SLIPPAGE_PCT can only lower it).
+  const slippagePct = resolveSlippagePct(args.maxSlippagePct);
   const slippageBps = Math.round(slippagePct * 100);
   const result = await callConvex(
     "/mcp/rh/quote",
@@ -50,6 +44,28 @@ export async function quoteRh(args: {
   return { ...result, from, to, sellAmount, slippageBps };
 }
 
+const ERC20_APPROVE_ABI = [
+  "function allowance(address,address) view returns (uint256)",
+  "function approve(address,uint256) returns (bool)",
+];
+
+/** Approve EXACTLY `amountWei` (never MaxUint256). If a non-zero allowance that is too small exists, reset to 0 first
+ *  (USDT-style tokens revert on non-zero -> non-zero). Records tx hashes. */
+async function approveExact(erc20: ethers.Contract, owner: string, spender: string, amountWei: bigint, hashes: string[]): Promise<void> {
+  if (amountWei <= 0n) throw new Error("Approval amount must be positive.");
+  const allowance: bigint = await erc20.allowance(owner, spender);
+  if (allowance === amountWei) return;
+  // A larger leftover allowance is also tightened to the exact amount so no more than this swap can ever be pulled.
+  if (allowance > 0n) {
+    const t0 = await erc20.approve(spender, 0n);
+    await t0.wait();
+    hashes.push(t0.hash);
+  }
+  const tx = await erc20.approve(spender, amountWei);
+  await tx.wait();
+  hashes.push(tx.hash);
+}
+
 /** Plain ERC-20 approval for routers that pull via transferFrom (SwapRouter02). */
 export async function ensureDirectApproval(
   wallet: ethers.Wallet | ethers.HDNodeWallet,
@@ -57,21 +73,13 @@ export async function ensureDirectApproval(
   spender: string,
   amountWei: bigint
 ): Promise<string[]> {
+  assertAllowedSpender(RH_CHAIN_ID, spender);
   const provider = await rhProviderAsync();
   const signer = wallet.connect(provider);
-  const erc20 = new ethers.Contract(
-    token,
-    [
-      "function allowance(address,address) view returns (uint256)",
-      "function approve(address,uint256) returns (bool)",
-    ],
-    signer
-  );
-  const allowance: bigint = await erc20.allowance(wallet.address, spender);
-  if (allowance >= amountWei) return [];
-  const tx = await erc20.approve(spender, ethers.MaxUint256);
-  await tx.wait();
-  return [tx.hash];
+  const erc20 = new ethers.Contract(token, ERC20_APPROVE_ABI, signer);
+  const hashes: string[] = [];
+  await approveExact(erc20, wallet.address, spender, amountWei, hashes);
+  return hashes;
 }
 
 export async function ensureSellApprovals(
@@ -79,26 +87,19 @@ export async function ensureSellApprovals(
   token: string,
   amountWei: bigint
 ): Promise<string[]> {
+  assertAllowedSpender(RH_CHAIN_ID, RH_PERMIT2);
+  assertAllowedSpender(RH_CHAIN_ID, RH_UNIVERSAL_ROUTER);
   const provider = await rhProviderAsync();
   const signer = wallet.connect(provider);
   const hashes: string[] = [];
 
-  const erc20 = new ethers.Contract(
-    token,
-    [
-      "function allowance(address,address) view returns (uint256)",
-      "function approve(address,uint256) returns (bool)",
-    ],
-    signer
-  );
-  const allowance: bigint = await erc20.allowance(wallet.address, RH_PERMIT2);
-  if (allowance < amountWei) {
-    const tx = await erc20.approve(RH_PERMIT2, ethers.MaxUint256);
-    await tx.wait();
-    hashes.push(tx.hash);
-  }
+  // Step 1: ERC-20 -> Permit2, exactly the sell amount.
+  const erc20 = new ethers.Contract(token, ERC20_APPROVE_ABI, signer);
+  await approveExact(erc20, wallet.address, RH_PERMIT2, amountWei, hashes);
 
-  // Permit2.approve(token, spender, amount, expiration) selector 0x87517c45
+  // Step 2: Permit2 -> Universal Router, exactly the sell amount, 30 minutes (not 30 days).
+  const MAX160 = (1n << 160n) - 1n;
+  if (amountWei > MAX160) throw new Error("Amount exceeds uint160.");
   const permit2 = new ethers.Contract(
     RH_PERMIT2,
     [
@@ -112,14 +113,12 @@ export async function ensureSellApprovals(
     const amt = BigInt(al.amount ?? al[0] ?? 0);
     const exp = Number(al.expiration ?? al[1] ?? 0);
     const now = Math.floor(Date.now() / 1000);
-    if (amt >= amountWei && exp > now + 60) return hashes;
+    if (amt === amountWei && exp > now + 60) return hashes;
   } catch {
     /* re-approve */
   }
-  const expiration = Math.floor(Date.now() / 1000) + 30 * 24 * 3600; // 30d
-  // uint160 max for amount
-  const max160 = (1n << 160n) - 1n;
-  const tx2 = await permit2.approve(token, RH_UNIVERSAL_ROUTER, max160, expiration);
+  const expiration = Math.floor(Date.now() / 1000) + 30 * 60;
+  const tx2 = await permit2.approve(token, RH_UNIVERSAL_ROUTER, amountWei, expiration);
   await tx2.wait();
   hashes.push(tx2.hash);
   return hashes;
@@ -194,8 +193,13 @@ export async function confirmRhSwap(
 
 export async function broadcastRhSwap(
   wallet: ethers.Wallet | ethers.HDNodeWallet,
-  tx: { to: string; data: string; value: string; gas?: string }
+  tx: { to: string; data: string; value: string; gas?: string },
+  /** Native wei the caller authorised (the ETH sell amount; 0 for token sells). The quote's own value is checked against it. */
+  maxValueWei: bigint = 0n
 ): Promise<string> {
+  // The quote is untrusted data: target allowlist, value bound, calldata decode, then eth_call simulation.
+  validateSwapTx(tx, { chainId: RH_CHAIN_ID, wallet: wallet.address, maxValueWei });
+  await simulateTx(rhRpc, wallet.address, tx);
   const provider = await rhProviderAsync();
   const signer = wallet.connect(provider);
   // "pending" (not "latest") so sequential swaps in one orders-tick get

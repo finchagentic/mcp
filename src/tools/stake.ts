@@ -3,6 +3,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
 import { callConvex } from "../convex.js";
 import { getSavedToken } from "../config.js";
+import { FINCH_RH_ADDRESS } from "../constants.js";
 import { rhProviderAsync, RH_EXPLORER } from "./rh-mcp.js";
 
 // FINCH staking - MCP wrapper around the existing app/convex staking
@@ -14,7 +15,7 @@ import { rhProviderAsync, RH_EXPLORER } from "./rh-mcp.js";
 // address, different balance, never conflate. No tool here ever returns a
 // private key or seed phrase; the custodial key stays server-side.
 
-const FINCH_CA = "0xce1981b0431fb495912cab057d2877a290199824";
+const FINCH_CA = FINCH_RH_ADDRESS;
 const FINCH_DECIMALS = 18;
 const ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
 

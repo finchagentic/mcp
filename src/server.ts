@@ -17,6 +17,8 @@ import { filterTools } from "./tool-filter.js";
 import { withAnnotations } from "./annotations.js";
 import { FINCH_STATUS_TOOL, handleFinchStatus } from "./finch-status.js";
 import { processResponse } from "./finch-output.js";
+import { fenceResult, UNTRUSTED_NOTE } from "./untrusted.js";
+import { normalizeMoneyResult } from "./money-structure.js";
 
 // Read version from package.json so the server announces the same version
 // MCP clients see in the npm tarball. Falls back to "unknown" if the file
@@ -52,6 +54,9 @@ import { EVENT_TOOLS, handleEventTool } from "./tools/events.js";
 import { BASE_TOOLS, handleBaseTool } from "./tools/base.js";
 import { BASE_MCP_TOOLS, handleBaseMcpTool } from "./tools/base-mcp.js";
 import { RH_MCP_TOOLS, handleRhMcpTool } from "./tools/rh-mcp.js";
+import { SOLANA_TOOLS, handleSolanaTool } from "./tools/solana.js";
+import { LAUNCHPAD_TOOLS, handleLaunchpadTool } from "./tools/launchpad.js";
+import { LAUNCHPAD_SWAP_TOOLS, handleLaunchpadSwapTool } from "./tools/launchpad-swap.js";
 import { RH_ORDER_TOOLS, handleRhOrderTool } from "./tools/rh-orders.js";
 import { BRIDGE_TOOLS, handleBridgeTool } from "./tools/rh-bridge.js";
 import { MEMORY_TOOLS, handleMemoryTool } from "./tools/memory.js";
@@ -65,6 +70,7 @@ import { GITHUB_TOOLS, handleGithubTool } from "./tools/github.js";
 import { CHRONICLE_TOOLS, handleChronicle } from "./tools/chronicle.js";
 import { PACKET_TOOLS, handlePacket } from "./tools/packets.js";
 import { STAKE_TOOLS, handleStakeTool } from "./tools/stake.js";
+import { POLICY_TOOLS, handlePolicyTool } from "./tools/policy.js";
 import { getTier, PREMIUM_TOOLS, tokenGateError } from "./token-gate.js";
 
 const PRIVATE_KEY_RESPONSE = {
@@ -103,6 +109,9 @@ export const ALL_TOOLS = [
   ...CODER_TOOLS,        // 1 - audit_contract (static Solidity scan; the client model does the reasoning)
   ...BASE_TOOLS,         // 4 - base_mcp_yield_vaults, base_mcp_lending_rates, base_mcp_deposit_guide, base_mcp_network
   ...BASE_MCP_TOOLS,     // 7 - base_mcp_{status,balance,send,swap,estimate,lend,resolve} (analyze removed v3.17.5 - dead backend route)
+  ...SOLANA_TOOLS,       // 7 - sol_{wallet,balance,token_info,quote,swap,send,launch_token} (Solana: Jupiter swaps, SPL sends, pump.fun launches)
+  ...LAUNCHPAD_TOOLS,    // 5 - launchpad_{wallet,pairs,launches,token,launch_token} (Finch launchpad on Base + Robinhood Chain; local wallet, default-deny spend)
+  ...LAUNCHPAD_SWAP_TOOLS, // 2 - launchpad_{buy,sell} (Uniswap v4 via the Universal Router; slippage-bound, simulated before sending)
   ...RH_MCP_TOOLS,       // 8 - rh_mcp_{status,list_stocks,balance,estimate,swap} + rh_token_resolve, rh_analyze, rh_safety_check (RH Chain 4663 Uni V4: stocks + arbitrary crypto via DexScreener/Blockscout)
   ...RH_ORDER_TOOLS,     // 5 - rh_dca_create, rh_bracket_create, rh_orders_list, rh_order_cancel, rh_orders_tick (RH automated DCA/TP/SL)
   ...BRIDGE_TOOLS,       // 1 - rh_stock_bridge (tokenized stock vs real equity)
@@ -116,6 +125,7 @@ export const ALL_TOOLS = [
   ...GITHUB_TOOLS,       // 8 - list_repos, list_prs, get_pr, list_issues, get_issue, get_file, get_commits, search_code
   ...CHRONICLE_TOOLS,    // 4 - chronicle_add, chronicle_list, chronicle_search, chronicle_stats
   ...PACKET_TOOLS,       // 4 - packet_create, packet_run, packet_list, packet_share
+  ...POLICY_TOOLS,       // 3 - wallet_policy, approvals_list, approvals_revoke (tighten-only spend policy; allowance review)
   ...STAKE_TOOLS,        // 5 - stake_finch_status, stake_finch, unstake_finch, claim_vested_rewards, stake_auto_restake (custodial wallet; requires `finch login`)
   // Total tool count: use ALL_TOOLS.length, not a hardcoded number here -
   // this comment has drifted stale repeatedly. Per-category counts above
@@ -141,6 +151,9 @@ export const HANDLER_MAP = new Map<string, Handler>([
   ...EVENT_TOOLS.map(t       => [t.name, handleEventTool]       as [string, Handler]),
   ...BASE_TOOLS.map(t        => [t.name, handleBaseTool]        as [string, Handler]),
   ...BASE_MCP_TOOLS.map(t    => [t.name, handleBaseMcpTool]    as [string, Handler]),
+  ...SOLANA_TOOLS.map(t      => [t.name, handleSolanaTool]      as [string, Handler]),
+  ...LAUNCHPAD_TOOLS.map(t   => [t.name, handleLaunchpadTool]   as [string, Handler]),
+  ...LAUNCHPAD_SWAP_TOOLS.map(t => [t.name, handleLaunchpadSwapTool] as [string, Handler]),
   ...RH_MCP_TOOLS.map(t      => [t.name, handleRhMcpTool]       as [string, Handler]),
   ...RH_ORDER_TOOLS.map(t    => [t.name, handleRhOrderTool]     as [string, Handler]),
   ...BRIDGE_TOOLS.map(t      => [t.name, handleBridgeTool]      as [string, Handler]),
@@ -155,6 +168,7 @@ export const HANDLER_MAP = new Map<string, Handler>([
   ...CHRONICLE_TOOLS.map(t   => [t.name, (n: string, a: unknown) => handleChronicle(n, a as Record<string, unknown>)] as [string, Handler]),
   ...PACKET_TOOLS.map(t      => [t.name, (n: string, a: unknown) => handlePacket(n, a as Record<string, unknown>)] as [string, Handler]),
   ...STAKE_TOOLS.map(t       => [t.name, handleStakeTool]       as [string, Handler]),
+  ...POLICY_TOOLS.map(t      => [t.name, handlePolicyTool]      as [string, Handler]),
   [FINCH_STATUS_TOOL.name, ((_name: string, _args: unknown) => handleFinchStatus(ALL_TOOLS.length)) as Handler],
 ]);
 
@@ -165,13 +179,15 @@ export const HANDLER_MAP = new Map<string, Handler>([
 const SERVER_INSTRUCTIONS = [
   "Finch is the runtime layer for agentic AI: persistent memory, autonomous",
   "agents, a versioned vault, scheduled workflows, live market data, deep",
-  "research, DeFi on Base (base_mcp_*), and Robinhood Chain trading (rh_*).",
+  "research, DeFi on Base (base_mcp_*), and Robinhood Chain trading (rh_*), and Solana (sol_*).",
   "",
   "Tool annotations are set: read-only tools are safe to run without asking;",
   "tools with destructiveHint (deletes, cancels, packet_share, and anything",
   "that moves funds - base_mcp_swap/send, rh_mcp_swap, rh_dca_create,",
-  "rh_bracket_create, run_automation, packet_run, stake_finch,",
+  "sol_swap/sol_send/sol_launch_token, rh_bracket_create, run_automation, packet_run, stake_finch,",
   "unstake_finch) should be confirmed with the user before running.",
+  "",
+  UNTRUSTED_NOTE,
   "",
   "Vault entries are also exposed as resources (finch://vault/<key>); prefer",
   "reading those over a vault_read tool call when you only need the content.",
@@ -257,7 +273,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
     try {
       const result = await handleDeepResearch(name, args, onProgress);
-      if (result) return result;
+      if (result) return fenceResult(name, result);
     } catch (err: any) {
       return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
     }
@@ -280,7 +296,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     });
     const result = await Promise.race([handler(name, args), timeoutPromise]);
     clearTimeout(timer!);
-    if (result) return processResponse(result) ?? result;
+    if (result) return normalizeMoneyResult(name, fenceResult(name, processResponse(result) ?? result));
     return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
   } catch (err: any) {
     if (err instanceof PaymentRequiredError) {

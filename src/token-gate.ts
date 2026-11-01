@@ -1,10 +1,12 @@
-import { getOrCreateWallet, BASE_RPC } from "./wallet.js";
+import { getOrCreateWallet } from "./wallet.js";
 import { getSavedToken } from "./config.js";
+import { callConvex } from "./convex.js";
+import { rhProviderAsync } from "./tools/rh-mcp-provider.js";
+import { ethers } from "ethers";
+import { FINCH_RH_ADDRESS, FINCH_RH_CHAIN_ID } from "./constants.js";
 import type { ToolResult } from "./types.js";
 
-const FINCH_TOKEN_CA = "0x4B524015D54a27d4472F5c59c570730D69499Ba3";
-const BALANCE_SELECTOR = "0x70a08231"; // balanceOf(address)
-const CACHE_TTL = 5 * 60 * 1000;      // 5 min - avoid per-call RPC
+const CACHE_TTL = 5 * 60 * 1000; // 5 min - avoid per-call RPC / backend hit
 
 // 1 FINCH (18 decimals). Override via FINCH_MIN_BALANCE env var.
 const MIN_BALANCE = BigInt(process.env.FINCH_MIN_BALANCE ?? "1000000000000000000");
@@ -12,29 +14,32 @@ const MIN_BALANCE = BigInt(process.env.FINCH_MIN_BALANCE ?? "1000000000000000000
 export type Tier = "holder" | "basic";
 
 let _cache: { tier: Tier; at: number } | null = null;
+let _authCache: { ok: boolean; at: number; cred: string } | null = null;
+export function resetTierCache(): void { _cache = null; _authCache = null; }
 
 async function erc20BalanceOf(address: string): Promise<bigint> {
-  const padded = address.toLowerCase().replace("0x", "").padStart(64, "0");
-  const res = await fetch(BASE_RPC, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0", id: 1, method: "eth_call",
-      params: [{ to: FINCH_TOKEN_CA, data: BALANCE_SELECTOR + padded }, "latest"],
-    }),
-    signal: AbortSignal.timeout(8000),
-  });
-  const data = await res.json() as { result?: string };
-  return BigInt(data.result ?? "0x0");
+  const provider = await rhProviderAsync();
+  const c = new ethers.Contract(FINCH_RH_ADDRESS, ["function balanceOf(address) view returns (uint256)"], provider);
+  return BigInt(await c.balanceOf(address));
 }
 
-// Session token or API key → always holder (authenticated user)
-function hasAuthBypass(): boolean {
-  return !!(getSavedToken() || process.env.FINCH_API_KEY);
+/** A credential only counts if the backend accepts it. A non-empty string is NOT enough. */
+export async function credentialIsValid(): Promise<boolean> {
+  const cred = process.env.FINCH_API_KEY || getSavedToken() || "";
+  if (!cred) return false;
+  if (_authCache && _authCache.cred === cred && Date.now() - _authCache.at < CACHE_TTL) return _authCache.ok;
+  let ok = false;
+  try {
+    // Cheap authenticated GET; callConvex throws on 401/403 and attaches the same credentials real calls use.
+    await callConvex("/automations/list", "GET", undefined, "tier_check", 8000, true);
+    ok = true;
+  } catch { ok = false; }
+  _authCache = { ok, at: Date.now(), cred };
+  return ok;
 }
 
 export async function getTier(): Promise<Tier> {
-  if (hasAuthBypass()) return "holder";
+  if (await credentialIsValid()) return "holder";
   if (_cache && Date.now() - _cache.at < CACHE_TTL) return _cache.tier;
 
   try {
@@ -44,7 +49,7 @@ export async function getTier(): Promise<Tier> {
     _cache = { tier, at: Date.now() };
     return tier;
   } catch {
-    // RPC unreachable - don't block, degrade gracefully
+    // RPC unreachable - fail closed to the basic tier
     return "basic";
   }
 }
@@ -72,15 +77,15 @@ export function tokenGateError(toolName: string): ToolResult {
       text: [
         "🔒 **Premium Tool**",
         "",
-        `\`${toolName}\` requires a Finch account or FINCH token.`,
+        `\`${toolName}\` requires a valid Finch account or FINCH token.`,
         "",
         "**Option 1 - Sign in (easiest):**",
-        "1. Go to finchagentic.com and sign in",
-        "2. Copy your session token from Settings",
-        "3. Add to your MCP config: `FINCH_SESSION_TOKEN=…`",
+        "1. Go to finchagentic.com and create an API key (Settings → API Keys)",
+        "2. Add to your MCP config: `FINCH_API_KEY=finch_sk_…` (or run `finch login`)",
+        "   (the key is validated with the Finch backend - a made-up value does not unlock anything)",
         "",
-        "**Option 2 - Hold FINCH token on Base:**",
-        "1. Get FINCH  -  CA: `0x4B524015D54a27d4472F5c59c570730D69499Ba3`",
+        `**Option 2 - Hold FINCH on Robinhood Chain (${FINCH_RH_CHAIN_ID}):**`,
+        `1. Get FINCH  -  CA: \`${FINCH_RH_ADDRESS}\``,
         "2. Hold at least 1 FINCH in your local wallet",
         "3. Access unlocks automatically",
         "",
