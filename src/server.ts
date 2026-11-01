@@ -18,6 +18,7 @@ import { withAnnotations } from "./annotations.js";
 import { FINCH_STATUS_TOOL, handleFinchStatus } from "./finch-status.js";
 import { processResponse } from "./finch-output.js";
 import { fenceResult, UNTRUSTED_NOTE } from "./untrusted.js";
+import { normalizeMoneyResult } from "./money-structure.js";
 
 // Read version from package.json so the server announces the same version
 // MCP clients see in the npm tarball. Falls back to "unknown" if the file
@@ -292,7 +293,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     });
     const result = await Promise.race([handler(name, args), timeoutPromise]);
     clearTimeout(timer!);
-    if (result) return fenceResult(name, processResponse(result) ?? result);
+    if (result) return normalizeMoneyResult(name, fenceResult(name, processResponse(result) ?? result));
     return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
   } catch (err: any) {
     if (err instanceof PaymentRequiredError) {
