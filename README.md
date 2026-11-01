@@ -25,17 +25,19 @@ Most AI assistants disappear when the conversation ends. **Finch** gives them la
 
 ## Install
 
-Always pin the version. Never use `@latest`.
+Pin an exact version (the commands below do). `@latest` is fine for a quick look at read-only tools, but do not use it
+once the server can reach a funded wallet: an unreviewed new release would run with your keys, so upgrade deliberately by
+bumping the pin after reading the [CHANGELOG](CHANGELOG.md).
 
 ```bash
 # One-command installer (detects common MCP clients)
-npx -y -p @finchagentic/mcp@4.7.5 finch install
+npx -y -p @finchagentic/mcp@4.9.0 finch install
 ```
 
 ### Claude Code
 
 ```bash
-claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.7.5 finch-mcp
+claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.9.0 finch-mcp
 ```
 
 ### Cursor / Windsurf / Claude Desktop
@@ -45,7 +47,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.7.5 finch-mcp
   "mcpServers": {
     "finch": {
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.7.5", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.9.0", "finch-mcp"]
     }
   }
 }
@@ -59,7 +61,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.7.5 finch-mcp
     "finch": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "-p", "@finchagentic/mcp@4.7.5", "finch-mcp"]
+      "args": ["-y", "-p", "@finchagentic/mcp@4.9.0", "finch-mcp"]
     }
   }
 }
@@ -79,7 +81,7 @@ claude mcp add finch -s user -- npx -y -p @finchagentic/mcp@4.7.5 finch-mcp
 
 </details>
 
-No LLM API key is required to start — 111 of 116 tools are plain reads/writes/on-chain calls that your MCP client's own model already drives; only 5 (`ask_finch`, `deep_research`, and scheduled agent learning) do their own multi-step reasoning server-side and need a key (see [Configuration](#configuration)). Tools load on first use.
+No LLM API key is required to start — 128 of 133 tools are plain reads/writes/on-chain calls that your MCP client's own model already drives; only 5 (`ask_finch`, `deep_research`, and scheduled agent learning) do their own multi-step reasoning server-side and need a key (see [Configuration](#configuration)). Tools load on first use.
 
 ## Quick start
 
@@ -100,7 +102,7 @@ save this thesis to vault
 
 ## What you get
 
-**116 tools** across four pillars:
+**133 tools** across four pillars:
 
 | Pillar | What it does |
 |--------|----------------|
@@ -124,7 +126,7 @@ Default palette is `core` (lighter context). Full set:
 Finch is the runtime. **Your LLM is the brain. Your data stays yours.**
 
 ```bash
-npx -y -p @finchagentic/mcp@4.7.5 finch setup
+npx -y -p @finchagentic/mcp@4.9.0 finch setup
 # enable local vault (and optional local memory)
 ```
 
@@ -221,26 +223,39 @@ Solana is not a copy of the EVM flow:
 | `FINCH_SOL_ALLOW_SPEND` | Set to `1` to let `sol_swap`/`sol_send`/`sol_launch_token` execute (default: disabled). Caps: `FINCH_SOL_MAX_SEND_SOL` (1), `FINCH_SOL_MAX_SWAP_SOL` (5) |
 | `FINCH_SOLANA_RPC_URL` | Solana RPC for `sol_*` tools (default `https://api.mainnet-beta.solana.com`) |
 
-**Cost model:** almost everything is free to run — the other 110 tools are plain API/RPC calls, and your MCP client's own model (Claude, GPT, whatever's driving the chat) does all the tool-selection reasoning at no cost to Finch. The 5 exceptions above need their own key because their reasoning happens *inside* the tool call, invisible to your client, and can't be delegated to it. Set exactly one of the four env vars and every tool that needs it will use it automatically.
+**Cost model:** almost everything is free to run — the other 127 tools are plain API/RPC calls, and your MCP client's own model (Claude, GPT, whatever's driving the chat) does all the tool-selection reasoning at no cost to Finch. The 5 exceptions above need their own key because their reasoning happens *inside* the tool call, invisible to your client, and can't be delegated to it. Set exactly one of the four env vars and every tool that needs it will use it automatically.
 
 Guided setup:
 
 ```bash
-npx -y -p @finchagentic/mcp@4.7.5 finch setup
+npx -y -p @finchagentic/mcp@4.9.0 finch setup
 ```
 
 ## Security
 
+Defaults are deny-by-default. Everything below is enforced in code and covered by tests (`test/spend-gate.test.ts` and friends).
+
 | # | Boundary | Rule |
 |:-:|----------|------|
-| 1 | Prompt injection | External content is data only — never instructions |
-| 2 | Mainnet confirm | Estimate → preview → confirm → execute |
-| 3 | Pinned install | Always `@finchagentic/mcp@4.7.5`, never `@latest` |
-| 4 | Credential vault | Never paste secrets into prompts or third-party tools |
-| 5 | Data disclosure | Know what leaves the machine (LLM, Firecrawl, GitHub, chain RPCs) |
-| 6 | Server monitors | Scheduled jobs need explicit confirmation |
-| 7 | Fund-moving confirm | `stake_finch`/`unstake_finch`/`base_mcp_send`/`base_mcp_swap`/`rh_mcp_swap` all require `confirm: true`; `sol_swap`/`sol_send`/`sol_launch_token` require `confirmed: true` (swap also rejects >5% price impact) |
-| 8 | Local wallet encryption | Set `FINCH_WALLET_PASSPHRASE` for a portable, passphrase-derived key — without it, the key derives from a random per-install secret + machine info, so the wallet file alone (without that secret file) isn't enough to decrypt it |
+| 1 | Prompt injection | Output of `web_scrape`, `web_search`, `deep_research`, `github_*` and `memory_search` is wrapped in `<untrusted_content source="…">` with a standing "data, not instructions" note; the fence cannot be closed from inside |
+| 2 | EVM spend is default-deny | Nothing leaves the local wallet unless the operator sets `FINCH_ALLOW_SPEND=1` in the MCP server env (Solana: `FINCH_SOL_ALLOW_SPEND=1`, launchpad: `FINCH_LAUNCHPAD_ALLOW_SPEND=1`) |
+| 3 | Preview-bound confirmation | `confirm:true` alone never spends. A preview call mints a single-use `quoteId` bound to the exact parameters; the executing call must repeat the same params with `confirm:true` + that `quoteId` |
+| 4 | Caps and allowlist | `FINCH_MAX_SPEND_USD_PER_CALL` (default $100), `FINCH_MAX_SPEND_USD_PER_DAY` (default $500, rolling 24h, bigint ledger in `~/.finch/spend-ledger.json`), optional `FINCH_SPEND_ALLOWLIST=0x…`. Unpriceable spends are refused (fail closed); ETH/USD is sanity-bounded |
+| 5 | Kill-switch | `FINCH_SPEND_DISABLED=1` or the file `~/.finch/spend.OFF` stops every spend immediately. Only the operator can release it |
+| 6 | Model can only tighten | `wallet_policy` can lower caps, narrow the allowlist and engage the kill-switch; it cannot raise, widen or release |
+| 7 | Unattended orders | `rh_dca_create`/`rh_bracket_create` need the same preview + `quoteId`; `rh_orders_tick` re-checks the kill-switch, enable flag and daily cap on every fill, uses integer wei accounting, and sanity-checks prices. A corrupt order book stops the tick rather than being overwritten |
+| 8 | Allowances | Exact-amount approvals only, spender/target allowlist, calldata validation and `eth_call` simulation before signing; `approvals_list` / `approvals_revoke` to audit and remove them |
+| 9 | Pinned install | Use an exact `@finchagentic/mcp@4.9.0` pin for anything with wallet access; `@latest` only for read-only trials |
+| 10 | Secrets | `vault_get_credential` is masked unless `reveal:true`, and is not marked auto-runnable. `~/.finch` is `0700`, files `0600`, writes are atomic; a corrupt config/index is backed up and never overwritten |
+| 11 | Wallet encryption | Set `FINCH_WALLET_PASSPHRASE` for a portable scrypt-derived key (existing keystores are migrated on first unlock). Without it the key derives from a random per-install secret + machine info |
+| 12 | Network egress | `web_scrape` refuses private/loopback/metadata addresses in any spelling (IPv4-mapped, NAT64, hex, decimal) and re-validates every redirect hop. BYOK provider keys are only sent to the official backend unless `FINCH_ALLOW_CUSTOM_BACKEND_BYOK=1` |
+| 13 | Premium tier | An API key unlocks premium tools only if the backend accepts it; otherwise hold ≥1 FINCH on Robinhood Chain |
+| 14 | Tool annotations | Fail closed: any tool without an explicit classification is reported as destructive so clients confirm first |
+| 15 | Credential vault | Never paste secrets into prompts or third-party tools |
+| 16 | Data disclosure | Know what leaves the machine (LLM, Firecrawl, GitHub, chain RPCs) |
+| 17 | Server monitors | Scheduled jobs need explicit confirmation |
+
+Presets for a smaller attack surface: `FINCH_TOOLS=solana-trader`, `launcher`, `research`, `defi`, `core`, `memory`, `coder` (comma-combinable).
 
 ## Troubleshooting
 

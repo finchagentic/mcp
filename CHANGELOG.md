@@ -16,7 +16,35 @@ All notable changes to **@finchagentic/mcp** are documented in this file.
 ### Notes
 - Historical entries below may still mention Finch package names for accuracy of past releases.
 
-## [4.9.0] — Launchpad tools (unreleased)
+## [4.9.0] — Launchpad tools + security hardening (unreleased)
+
+### Security hardening (4.9.0)
+
+**Breaking / behaviour changes**
+- EVM spending from the local wallet is now **default-deny**: set `FINCH_ALLOW_SPEND=1` to enable `base_mcp_send`, `base_mcp_swap`, `rh_mcp_swap`, `rh_dca_create`, `rh_bracket_create` and unattended `rh_orders_tick` fills.
+- Executing a spend requires `confirm:true` **and** the single-use `quoteId` from a preview of the same parameters. `confirm:true` alone only returns a preview.
+- `vault_get_credential` is masked unless `reveal:true`; it is no longer annotated read-only.
+- Unclassified tools are annotated destructive (fail closed). A non-empty `FINCH_API_KEY` no longer unlocks premium tools by itself; the backend must accept it.
+- `FINCH_WALLET_PASSPHRASE` now feeds the keystore's scrypt KDF directly. Existing keystores (sha256-derived) are re-encrypted automatically on first unlock.
+
+**Added**
+- `src/spend-gate.ts`: kill-switch (`FINCH_SPEND_DISABLED`, `~/.finch/spend.OFF`), per-call / rolling-24h USD caps, recipient allowlist, bigint ledger, ETH/USD sanity bounds, unattended gate for the order engine.
+- `wallet_policy` (show / tighten / kill), `approvals_list`, `approvals_revoke`.
+- Presets `solana-trader`, `launcher`; `research` unchanged.
+- `<untrusted_content>` fencing for `web_scrape`, `web_search`, `deep_research`, `github_*`, `memory_search`.
+- Uniform `{ txHash, status, chainId }` structured result on every money-moving tool.
+- `src/constants.ts`: single source for the FINCH contract (Robinhood Chain ERC-20).
+
+**Fixed**
+- `rh_orders_tick`: bigint wei accounting, price sanity, store persisted after each fill, strict store loading (corrupt file no longer treated as empty and overwritten).
+- `~/.finch` directories `0700`, files `0600` (existing ones are tightened); atomic writes everywhere; corrupt `config.json`, vault and memory indexes are no longer silently replaced.
+- `finch install` merges the existing `env` block, writes atomically and leaves a `.bak`; cron line quotes the log path; local-vault key directories use full sha256 (old directories still readable).
+- BYOK provider keys are not sent to a non-official `FINCH_CONVEX_URL` (warning printed).
+- Stale FINCH contract addresses (`0x4B52…9Ba3`, `0xce19…9824`) removed; token gate checks the Robinhood Chain ERC-20.
+- `web_scrape` follows redirects manually, re-checking each hop; private-address detection normalises IPv4-mapped, NAT64, 6to4, hex, octal and decimal forms.
+- Dependencies: `@modelcontextprotocol/sdk` 1.32.2, `zod` 4.6.7, `npm audit fix` (critical and high advisories cleared; remaining moderates listed in the release notes).
+
+### Launchpad
 
 ### Added
 - `launchpad_wallet`, `launchpad_pairs`, `launchpad_launches`, `launchpad_token`: read the Finch launchpad (Base + Robinhood Chain).
