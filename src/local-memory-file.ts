@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
+import { ensurePrivateDir, writePrivateFile, hardenDir } from "./secure-fs.js";
 import { meaningfulTerms, wordOccurrences } from "./_text-search.js";
 
 // Fully-local, user-owned memory backend (local-vault.ts's counterpart) -
@@ -43,22 +44,24 @@ function indexPath(cfg: LocalMemoryFileConfig): string {
 }
 
 function readIndex(cfg: LocalMemoryFileConfig): MemoryIndex {
+  let raw: string;
+  try { raw = fs.readFileSync(indexPath(cfg), "utf8"); }
+  catch (e: any) { if (e?.code === "ENOENT") return { memories: [] }; throw e; }
   try {
-    const raw = fs.readFileSync(indexPath(cfg), "utf8");
     const parsed = JSON.parse(raw) as Partial<MemoryIndex>;
     return { memories: parsed.memories ?? [] };
   } catch {
-    return { memories: [] };
+    throw new Error(`${indexPath(cfg)} is corrupt; refusing to continue so it is not overwritten.`);
   }
 }
 
 // Atomic write: temp file + rename, matching local-vault.ts's pattern so a
 // crash mid-write can't corrupt the index every memory depends on.
+const _hardenedMem = new Set<string>();
 function writeIndex(cfg: LocalMemoryFileConfig, idx: MemoryIndex): void {
-  fs.mkdirSync(cfg.dir, { recursive: true });
-  const tmp = indexPath(cfg) + `.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify(idx, null, 2), "utf8");
-  fs.renameSync(tmp, indexPath(cfg));
+  ensurePrivateDir(cfg.dir);
+  if (!_hardenedMem.has(cfg.dir)) { _hardenedMem.add(cfg.dir); hardenDir(cfg.dir); }
+  writePrivateFile(indexPath(cfg), JSON.stringify(idx, null, 2));
 }
 
 function toResult(m: MemoryRow): { id: string; content: string; metadata: Record<string, unknown>; score?: number } {

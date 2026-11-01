@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
 import { readConfig } from "./config.js";
+import { ensurePrivateDir, writePrivateFile, hardenDir } from "./secure-fs.js";
 import { meaningfulTerms, wordOccurrences } from "./_text-search.js";
 
 // Fully-local, user-owned vault backend (`vaultBackend: "local"`) - versioned
@@ -58,19 +59,27 @@ interface VaultIndex { entries: Record<string, EntryMeta>; links: LinkRecord[] }
 
 function now(): number { return Date.now(); }
 
+const _hardened = new Set<string>();
+function hardenOnce(dir: string): void { if (_hardened.has(dir)) return; _hardened.add(dir); hardenDir(dir); }
+
 function ensureDir(cfg: LocalVaultConfig): void {
-  fs.mkdirSync(path.join(cfg.dir, "data"), { recursive: true });
+  ensurePrivateDir(cfg.dir);
+  ensurePrivateDir(path.join(cfg.dir, "data"));
+  hardenOnce(cfg.dir);
 }
 
 function indexPath(cfg: LocalVaultConfig): string { return path.join(cfg.dir, "index.json"); }
 
 function readIndex(cfg: LocalVaultConfig): VaultIndex {
+  let raw: string;
+  try { raw = fs.readFileSync(indexPath(cfg), "utf8"); }
+  catch (e: any) { if (e?.code === "ENOENT") return { entries: {}, links: [] }; throw e; }
   try {
-    const raw = fs.readFileSync(indexPath(cfg), "utf8");
     const parsed = JSON.parse(raw) as Partial<VaultIndex>;
     return { entries: parsed.entries ?? {}, links: parsed.links ?? [] };
   } catch {
-    return { entries: {}, links: [] };
+    // Never treat a corrupt index as empty: the next write would destroy every entry's metadata.
+    throw new Error(`${indexPath(cfg)} is corrupt; refusing to continue so it is not overwritten. Restore it from a backup or fix it by hand.`);
   }
 }
 
@@ -78,13 +87,13 @@ function readIndex(cfg: LocalVaultConfig): VaultIndex {
 // manifest every entry depends on.
 function writeIndex(cfg: LocalVaultConfig, idx: VaultIndex): void {
   ensureDir(cfg);
-  const tmp = indexPath(cfg) + `.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify(idx, null, 2), "utf8");
-  fs.renameSync(tmp, indexPath(cfg));
+  writePrivateFile(indexPath(cfg), JSON.stringify(idx, null, 2));
 }
 
 function keyDir(key: string): string {
-  return crypto.createHash("sha1").update(key).digest("hex").slice(0, 16);
+  // Full sha256 (was sha1/16 hex: collisions would silently merge two keys). Existing entries keep the
+  // `dir` stored in the index, so old 16-hex directories stay readable; only NEW entries use this.
+  return crypto.createHash("sha256").update(key).digest("hex");
 }
 
 function contentPath(cfg: LocalVaultConfig, dir: string, version: number): string {
@@ -97,8 +106,8 @@ function readContent(cfg: LocalVaultConfig, dir: string, version: number): strin
 
 function writeContent(cfg: LocalVaultConfig, dir: string, version: number, content: string): void {
   const d = path.join(cfg.dir, "data", dir);
-  fs.mkdirSync(d, { recursive: true });
-  fs.writeFileSync(contentPath(cfg, dir, version), content, "utf8");
+  ensurePrivateDir(d);
+  writePrivateFile(contentPath(cfg, dir, version), content);
 }
 
 function slugify(s: string): string {
@@ -396,16 +405,20 @@ function getCredKey(cfg: LocalVaultConfig): Buffer {
   ensureDir(cfg);
   const p = credKeyPath(cfg);
   try {
-    return Buffer.from(fs.readFileSync(p, "utf8").trim(), "hex");
-  } catch {
+    const k = Buffer.from(fs.readFileSync(p, "utf8").trim(), "hex");
+    if (k.length === 32) return k;
+    throw new Error(`${p} is malformed (expected 32 bytes hex). Refusing to replace it: existing credentials would become unreadable.`);
+  } catch (e: any) {
+    if (e?.code !== "ENOENT") throw e;
     const key = crypto.randomBytes(32);
-    fs.writeFileSync(p, key.toString("hex"), { mode: 0o600 });
+    writePrivateFile(p, key.toString("hex"));
     return key;
   }
 }
 
 function readCredStore(cfg: LocalVaultConfig): Record<string, { iv: string; tag: string; data: string; description?: string; storedAt: string }> {
-  try { return JSON.parse(fs.readFileSync(credStorePath(cfg), "utf8")); } catch { return {}; }
+  try { return JSON.parse(fs.readFileSync(credStorePath(cfg), "utf8")); }
+  catch (e: any) { if (e?.code === "ENOENT") return {}; throw new Error(`${credStorePath(cfg)} is unreadable/corrupt; refusing to overwrite it.`); }
 }
 
 export function localVaultStoreCredential(cfg: LocalVaultConfig, name: string, value: string, description?: string): any {
@@ -415,7 +428,7 @@ export function localVaultStoreCredential(cfg: LocalVaultConfig, name: string, v
   const enc = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   const store = readCredStore(cfg);
   store[name] = { iv: iv.toString("hex"), tag: cipher.getAuthTag().toString("hex"), data: enc.toString("hex"), description, storedAt: new Date(now()).toUTCString() };
-  fs.writeFileSync(credStorePath(cfg), JSON.stringify(store, null, 2), { mode: 0o600 });
+  writePrivateFile(credStorePath(cfg), JSON.stringify(store, null, 2));
   return { name, key: `credential/${name}` };
 }
 

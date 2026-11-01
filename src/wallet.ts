@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
+import { ensurePrivateDir, hardenDir, writePrivateFile } from "./secure-fs.js";
 import { validateSwapTx, assertAllowedTarget, isAllowedSpender, simulateTx, PERMIT2 } from "./evm-guard.js";
 
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
@@ -65,8 +66,7 @@ function getOrCreateLocalSecret(): string {
     );
   }
   const secret = crypto.randomBytes(32).toString("hex");
-  if (!fs.existsSync(WALLET_DIR)) fs.mkdirSync(WALLET_DIR, { recursive: true, mode: 0o700 });
-  try { fs.chmodSync(WALLET_DIR, 0o700); } catch { /* best effort */ }
+  ensurePrivateDir(WALLET_DIR);
   fs.writeFileSync(LOCAL_SECRET_FILE, secret, { mode: 0o600, flag: "wx" });
   return secret;
 }
@@ -77,6 +77,14 @@ export function getKeyMaterial(): string {
   const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
   if (passphrase) return "pass:" + passphrase;
   return "local:" + getOrCreateLocalSecret() + os.hostname() + os.platform() + os.arch();
+}
+
+/** Key for NEW EVM keystores. With a passphrase the raw passphrase goes to the keystore's scrypt KDF
+ *  (no fast pre-hash/truncation). Without one, the previous local-secret derivation is kept. */
+export function getWalletKey(): string {
+  const passphrase = process.env.FINCH_WALLET_PASSPHRASE ?? "";
+  if (passphrase) return "pass:" + passphrase;
+  return getMachineKey();
 }
 
 export function getMachineKey(): string {
@@ -173,16 +181,17 @@ export async function getOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNode
 async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet> {
   if (_cachedWallet) return _cachedWallet;
   warnIfNoPassphrase();
+  hardenDir(WALLET_DIR);
   if (fs.existsSync(WALLET_FILE)) {
     const encrypted = fs.readFileSync(WALLET_FILE, "utf8");
     try {
-      const wallet = await ethers.Wallet.fromEncryptedJson(encrypted, getMachineKey());
+      const wallet = await ethers.Wallet.fromEncryptedJson(encrypted, getWalletKey());
       _cachedWallet = wallet;
       return wallet;
     } catch (currentErr: any) {
       const migrateWith = async (w: ethers.Wallet | ethers.HDNodeWallet) => {
         _allowSecretCreation = true; // decrypt already proven with a legacy key
-        try { return await w.encrypt(getMachineKey()); } finally { _allowSecretCreation = false; }
+        try { return await w.encrypt(getWalletKey()); } finally { _allowSecretCreation = false; }
       };
       // Fall back to the pre-fix machine-bound scheme, for wallets encrypted
       // before passphrases became portable. Only relevant on the ORIGINAL
@@ -194,6 +203,19 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
       // set when this file was encrypted) and "" (the common case - a user
       // setting FINCH_WALLET_PASSPHRASE for the first time, whose existing
       // file predates having any passphrase at all).
+      // Tier 0: keystores written before the raw-passphrase change used sha256(passphrase)[0:32] as the password.
+      if (process.env.FINCH_WALLET_PASSPHRASE) {
+        try {
+          const prevWallet = await ethers.Wallet.fromEncryptedJson(encrypted, getMachineKey());
+          _cachedWallet = prevWallet;
+          try {
+            const migrated = await migrateWith(prevWallet);
+            writePrivateFile(WALLET_FILE, migrated);
+            process.stderr.write(`\nRe-encrypted ${WALLET_FILE} with the raw passphrase (scrypt) scheme.\n\n`);
+          } catch { /* best effort; old key keeps working */ }
+          return prevWallet;
+        } catch { /* not this scheme - continue */ }
+      }
       const legacyCandidates = [...new Set([process.env.FINCH_WALLET_PASSPHRASE ?? "", ""])];
       let legacyWallet: ethers.Wallet | ethers.HDNodeWallet | null = null;
       for (const candidate of legacyCandidates) {
@@ -208,7 +230,7 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
         // hold the right key, so this only ever needs to happen once.
         try {
           const migrated = await migrateWith(legacyWallet);
-          fs.writeFileSync(WALLET_FILE, migrated, { mode: 0o600 });
+          writePrivateFile(WALLET_FILE, migrated);
           process.stderr.write(`\nMigrated ${WALLET_FILE} to the portable passphrase scheme.\n\n`);
         } catch {
           /* migration is best-effort - the legacy key still works next run either way */
@@ -225,7 +247,7 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
           _cachedWallet = oldNoPassWallet;
           try {
             const migrated = await migrateWith(oldNoPassWallet);
-            fs.writeFileSync(WALLET_FILE, migrated, { mode: 0o600 });
+            writePrivateFile(WALLET_FILE, migrated);
             process.stderr.write(`\nMigrated ${WALLET_FILE} to the higher-entropy no-passphrase scheme.\n\n`);
           } catch {
             /* migration is best-effort - the legacy key still works next run either way */
@@ -254,8 +276,8 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
     }
   }
   const wallet = ethers.Wallet.createRandom();
-  if (!fs.existsSync(WALLET_DIR)) fs.mkdirSync(WALLET_DIR, { recursive: true });
-  const encrypted = await wallet.encrypt(getMachineKey());
+  ensurePrivateDir(WALLET_DIR);
+  const encrypted = await wallet.encrypt(getWalletKey());
   try {
     // Exclusive create ("wx") - guards the cross-process version of the race
     // the in-process mutex above already closes: two separate `finch`
@@ -269,7 +291,7 @@ async function loadOrCreateWallet(): Promise<ethers.Wallet | ethers.HDNodeWallet
     // never sign with the wallet we generated in memory once it's clear it
     // isn't the one actually persisted to disk.
     const encryptedExisting = fs.readFileSync(WALLET_FILE, "utf8");
-    const existingWallet = await ethers.Wallet.fromEncryptedJson(encryptedExisting, getMachineKey());
+    const existingWallet = await ethers.Wallet.fromEncryptedJson(encryptedExisting, getWalletKey());
     _cachedWallet = existingWallet;
     return existingWallet;
   }

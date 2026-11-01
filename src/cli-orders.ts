@@ -47,7 +47,8 @@ export function installOrdersScheduler(): void {
     }
   } else {
     const logFile = path.join(os.homedir(), ".finch", "orders-tick.log");
-    const line = `*/15 * * * * ${invocation} >> ${logFile} 2>&1`;
+    const shq = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
+    const line = `*/15 * * * * ${invocation} >> ${shq(logFile)} 2>&1`;
     try {
       const existing = (() => {
         try { return child_process.execSync("crontab -l", { stdio: ["pipe", "pipe", "ignore"] }).toString(); }

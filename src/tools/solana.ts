@@ -24,6 +24,7 @@ import {
 } from "@solana/web3.js";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { ToolResult } from "../types.js";
+import { ensurePrivateDir } from "../secure-fs.js";
 import { getMachineKey, getKeyMaterial } from "../wallet.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -264,8 +265,7 @@ export function loadSolanaKeypair(create: boolean): { keypair: Keypair; created:
   }
   if (!create) return null;
   const keypair = Keypair.generate();
-  if (!fs.existsSync(walletDir())) fs.mkdirSync(walletDir(), { recursive: true, mode: 0o700 });
-  try { fs.chmodSync(walletDir(), 0o700); } catch { /* best effort */ }
+  ensurePrivateDir(walletDir());
   try {
     writeFileAtomic(file, encryptSecret(keypair.secretKey), true);
   } catch (e: any) {

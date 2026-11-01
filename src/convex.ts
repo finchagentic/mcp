@@ -2,6 +2,25 @@ import { signRequest } from "./wallet.js";
 import { getSavedToken } from "./config.js";
 
 export const CONVEX_SITE = process.env.FINCH_CONVEX_URL ?? "https://valuable-fish-533.convex.site";
+
+const OFFICIAL_HOSTS = ["valuable-fish-533.convex.site", "finchagentic.com"];
+export function isOfficialBackend(url: string = CONVEX_SITE): boolean {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return new URL(url).protocol === "https:" && OFFICIAL_HOSTS.some((o) => h === o || h.endsWith("." + o));
+  } catch { return false; }
+}
+let _byokWarned = false;
+/** BYOK provider keys are only sent to the official backend, unless FINCH_ALLOW_CUSTOM_BACKEND_BYOK=1. */
+export function byokAllowed(url: string = CONVEX_SITE): boolean {
+  if (isOfficialBackend(url)) return true;
+  if (process.env.FINCH_ALLOW_CUSTOM_BACKEND_BYOK === "1") return true;
+  if (!_byokWarned) {
+    _byokWarned = true;
+    process.stderr.write(`[finch] WARNING: FINCH_CONVEX_URL points at a non-official backend (${url}). Your BYOK provider keys (ANTHROPIC/OPENAI/GROK/BANKR) will NOT be sent to it. Set FINCH_ALLOW_CUSTOM_BACKEND_BYOK=1 if you operate that backend and trust it.\n`);
+  }
+  return false;
+}
 const RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 const RETRY_DELAYS = [500, 1000, 2000];
 
@@ -78,11 +97,15 @@ export async function callConvex(
   const paymentHeader = process.env.FINCH_PAYMENT_HEADER;
   if (paymentHeader) headers["X-Payment"] = paymentHeader;
 
-  // BYOK headers - user pays for their own AI/service costs
-  if (process.env.ANTHROPIC_API_KEY) headers["X-User-Anthropic-Key"] = process.env.ANTHROPIC_API_KEY;
-  if (process.env.OPENAI_API_KEY) headers["X-User-OpenAI-Key"] = process.env.OPENAI_API_KEY;
-  if (process.env.GROK_API_KEY) headers["X-User-Grok-Key"] = process.env.GROK_API_KEY;
-  if (process.env.BANKR_API_KEY) headers["X-User-Bankr-Key"] = process.env.BANKR_API_KEY;
+  // BYOK headers - user pays for their own AI/service costs.
+  // Never ship provider keys to a non-official backend unless the operator explicitly opted in.
+  const byokOk = byokAllowed();
+  if (byokOk) {
+    if (process.env.ANTHROPIC_API_KEY) headers["X-User-Anthropic-Key"] = process.env.ANTHROPIC_API_KEY;
+    if (process.env.OPENAI_API_KEY) headers["X-User-OpenAI-Key"] = process.env.OPENAI_API_KEY;
+    if (process.env.GROK_API_KEY) headers["X-User-Grok-Key"] = process.env.GROK_API_KEY;
+    if (process.env.BANKR_API_KEY) headers["X-User-Bankr-Key"] = process.env.BANKR_API_KEY;
+  }
 
   let lastError: Error | null = null;
   const attempts = noRetry ? 1 : RETRY_DELAYS.length;
