@@ -70,6 +70,7 @@ import { GITHUB_TOOLS, handleGithubTool } from "./tools/github.js";
 import { CHRONICLE_TOOLS, handleChronicle } from "./tools/chronicle.js";
 import { PACKET_TOOLS, handlePacket } from "./tools/packets.js";
 import { STAKE_TOOLS, handleStakeTool } from "./tools/stake.js";
+import { POLICY_TOOLS, handlePolicyTool } from "./tools/policy.js";
 import { getTier, PREMIUM_TOOLS, tokenGateError } from "./token-gate.js";
 
 const PRIVATE_KEY_RESPONSE = {
@@ -124,6 +125,7 @@ export const ALL_TOOLS = [
   ...GITHUB_TOOLS,       // 8 - list_repos, list_prs, get_pr, list_issues, get_issue, get_file, get_commits, search_code
   ...CHRONICLE_TOOLS,    // 4 - chronicle_add, chronicle_list, chronicle_search, chronicle_stats
   ...PACKET_TOOLS,       // 4 - packet_create, packet_run, packet_list, packet_share
+  ...POLICY_TOOLS,       // 3 - wallet_policy, approvals_list, approvals_revoke (tighten-only spend policy; allowance review)
   ...STAKE_TOOLS,        // 5 - stake_finch_status, stake_finch, unstake_finch, claim_vested_rewards, stake_auto_restake (custodial wallet; requires `finch login`)
   // Total tool count: use ALL_TOOLS.length, not a hardcoded number here -
   // this comment has drifted stale repeatedly. Per-category counts above
@@ -166,6 +168,7 @@ export const HANDLER_MAP = new Map<string, Handler>([
   ...CHRONICLE_TOOLS.map(t   => [t.name, (n: string, a: unknown) => handleChronicle(n, a as Record<string, unknown>)] as [string, Handler]),
   ...PACKET_TOOLS.map(t      => [t.name, (n: string, a: unknown) => handlePacket(n, a as Record<string, unknown>)] as [string, Handler]),
   ...STAKE_TOOLS.map(t       => [t.name, handleStakeTool]       as [string, Handler]),
+  ...POLICY_TOOLS.map(t      => [t.name, handlePolicyTool]      as [string, Handler]),
   [FINCH_STATUS_TOOL.name, ((_name: string, _args: unknown) => handleFinchStatus(ALL_TOOLS.length)) as Handler],
 ]);
 

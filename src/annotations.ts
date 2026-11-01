@@ -69,6 +69,7 @@ const READ_ONLY_OPEN = new Set<string>([
   "rh_analyze",
   "rh_safety_check",
   "rh_orders_list",
+  "approvals_list",
   "rh_stock_bridge",
   "memory_search",
   "memory_context",
@@ -115,6 +116,7 @@ const READ_ONLY_LOCAL = new Set<string>([
 // Toggles and upserts: re-running with the same args lands in the same state.
 const WRITE_IDEMPOTENT = new Set<string>([
   "agent_update",
+  "wallet_policy", // can only tighten; re-running the same call lands in the same state
   "pause_automation",
   "stake_auto_restake",
   "vault_link",
@@ -176,6 +178,7 @@ const DESTRUCTIVE = new Set<string>([
   "launchpad_launch_token",
   "launchpad_buy",
   "launchpad_sell",
+  "approvals_revoke", // on-chain tx (gas); removes an allowance
   "rh_dca_create", // arms recurring real buys
   "rh_bracket_create", // arms real TP/SL sells
   // a swap/send automation arms unattended, REPEATING real fund movement

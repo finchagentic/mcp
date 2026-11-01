@@ -4,7 +4,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 // invoked by name); only the LIST response sent to clients is trimmed by
 // FINCH_TOOLS, to cut LLM context cost. Default = "core".
 //
-//   FINCH_TOOLS=core|defi|research|memory|all, or comma-separated
+//   FINCH_TOOLS=core|defi|research|memory|coder|solana-trader|launcher|all, or comma-separated
 //
 // Unknown presets fall back to all to avoid silently hiding tools.
 
@@ -18,10 +18,14 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 // through that same preset). New tools MUST match a preset or the test fails
 // the build, instead of quietly vanishing like these did.
 const PRESETS: Record<string, RegExp> = {
-  core: /^(memory_|vault_|code_session_save|list_projects|agent_|ask_finch|finch_status|finch_diagnostics|finch_shell_chat|get_wallet_address|get_wallet_balance|wallet_sign_message|chronicle_|packet_)/,
-  defi: /^(get_market_data|get_token_data|compare_tokens|market_overview|token_history|get_base_token_data|stock_fundamentals|stock_insider|stock_events|market_thesis|trade_plan|base_mcp_|rh_|sol_|launchpad_|base_|get_defi_yields|score_token|check_token|scan_market|get_wallet_balance|wallet_sign_message|create_automation|list_automations|pause_automation|delete_automation|get_automation_runs|run_automation|miroshark_|stake_|unstake_finch|claim_vested_rewards)/,
+  core: /^(memory_|vault_|code_session_save|list_projects|agent_|ask_finch|finch_status|finch_diagnostics|finch_shell_chat|get_wallet_address|get_wallet_balance|wallet_sign_message|wallet_policy|approvals_|chronicle_|packet_)/,
+  defi: /^(get_market_data|get_token_data|compare_tokens|market_overview|token_history|get_base_token_data|stock_fundamentals|stock_insider|stock_events|market_thesis|trade_plan|base_mcp_|rh_|sol_|launchpad_|base_|get_defi_yields|score_token|check_token|scan_market|get_wallet_balance|wallet_sign_message|wallet_policy|approvals_|create_automation|list_automations|pause_automation|delete_automation|get_automation_runs|run_automation|miroshark_|stake_|unstake_finch|claim_vested_rewards)/,
   research: /^(memory_|vault_|code_session_save|list_projects|deep_research|research_compare|research_chain|web_search|web_scrape|schedule_research|list_monitors|cancel_monitor|ask_finch|stock_fundamentals|stock_insider|stock_events)/,
   memory: /^(memory_|vault_|code_session_save|list_projects|agent_|chronicle_)/,
+  // Solana-only trader: market data, sol_*, Solana launchpad legs, safety rails.
+  "solana-trader": /^(get_market_data|get_token_data|compare_tokens|market_overview|token_history|score_token|check_token|scan_market|sol_|launchpad_(wallet|pairs|launches|token|buy|sell)|wallet_policy|get_wallet_address|web_search|finch_status|memory_(add|search))/,
+  // Launchpad operator: launch + trade Finch-launched tokens, approvals hygiene, orders.
+  launcher: /^(launchpad_|get_wallet_address|get_wallet_balance|wallet_policy|approvals_|rh_orders_|rh_dca_create|rh_bracket_create|rh_order_cancel|rh_mcp_(status|balance)|base_mcp_(status|balance)|get_base_token_data|finch_status)/,
   coder: /^(audit_contract|github_|code_session_save)/,
 };
 

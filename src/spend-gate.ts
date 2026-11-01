@@ -183,6 +183,12 @@ function quoteValid(id: unknown, tool: string, chainId: number, params: Record<s
   return !!q && q.exp >= Date.now() && q.fp === fingerprint(tool, chainId, params);
 }
 export function resetQuotes(): void { quotes.clear(); }
+/** Validate AND consume a quoteId minted by issueQuoteId for these exact params (single use). */
+export function consumeQuote(id: unknown, tool: string, chainId: number, params: Record<string, unknown>): boolean {
+  if (!quoteValid(id, tool, chainId, params)) return false;
+  quotes.delete(String(id));
+  return true;
+}
 
 // ── Trusted internal calls (rh_orders_tick -> rh_mcp_swap) ──────────────────
 // MCP arguments arrive as parsed JSON and can never be members of this WeakSet.
