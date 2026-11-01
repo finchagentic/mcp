@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
+import { validateSwapTx, assertAllowedTarget, isAllowedSpender, simulateTx, PERMIT2 } from "./evm-guard.js";
 
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 
@@ -349,6 +350,14 @@ export async function waitForReceipt(
   return { mined: false };
 }
 
+export interface SignOpts {
+  /** "swap": tx.to must be an allowlisted router and calldata is validated. "transfer": caller built the calldata locally
+   *  and has verified it; tx.to is not router-checked. */
+  kind?: "swap" | "transfer";
+  /** Max native wei the tx may carry. Default 0 (an ETH-in swap/transfer must say so explicitly). */
+  maxValueWei?: bigint;
+}
+
 export async function signAndBroadcast(
   wallet: ethers.Wallet | ethers.HDNodeWallet,
   txData: {
@@ -359,15 +368,36 @@ export async function signAndBroadcast(
     gasPrice?: string;
     permit2?: any;
     issues?: any;
-  }
+  },
+  opts: SignOpts = {}
 ): Promise<string> {
+  const kind = opts.kind ?? "swap";
+  const maxValueWei = opts.maxValueWei ?? 0n;
+  if (kind === "swap") {
+    validateSwapTx(txData, { chainId: BASE_CHAIN_ID, wallet: wallet.address, maxValueWei });
+  } else if (BigInt(txData.value || "0") > maxValueWei) {
+    throw new Error("Transaction value exceeds the authorised amount. Refusing to sign.");
+  }
   let data = txData.data || "0x";
   if (txData.permit2?.eip712) {
     const eip712 = txData.permit2.eip712;
+    // The Permit2 signature authorises a token pull: bind it to the real Permit2 contract, this chain, and an
+    // allowlisted spender, otherwise a hostile quote could have us sign an approval for an attacker.
+    const dom = eip712.domain ?? {};
+    if (String(dom.verifyingContract ?? "").toLowerCase() !== PERMIT2.toLowerCase() || Number(dom.chainId) !== BASE_CHAIN_ID) {
+      throw new Error("Permit2 typed data targets the wrong contract/chain. Refusing to sign.");
+    }
+    const spender = eip712.message?.spender;
+    if (!spender || !isAllowedSpender(BASE_CHAIN_ID, spender)) {
+      throw new Error(`Permit2 typed data names spender ${spender} which is not allowlisted. Refusing to sign.`);
+    }
     const { EIP712Domain: _d, ...typesWithout } = eip712.types ?? {};
     const sig = await wallet.signTypedData(eip712.domain, typesWithout, eip712.message);
     data = data + sig.replace("0x", "");
   }
+  assertAllowedTargetIfSwap(kind, txData.to);
+  // Dry-run against current state; a tx that reverts in simulation is never signed.
+  await simulateTx(rpcPost, wallet.address, { to: txData.to, data, value: txData.value || "0" });
 
   const [nonce, gasPrice] = await Promise.all([getNonce(wallet.address), getGasPrice()]);
 
@@ -383,4 +413,8 @@ export async function signAndBroadcast(
 
   const signedTx = await wallet.signTransaction(tx);
   return broadcastTx(signedTx);
+}
+
+function assertAllowedTargetIfSwap(kind: string, to: string): void {
+  if (kind === "swap") assertAllowedTarget(BASE_CHAIN_ID, to);
 }

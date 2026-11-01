@@ -31,6 +31,7 @@ import {
   renderAnalysis,
 } from "./rh-mcp-risk.js";
 import { blockscoutSafety, assessSafety, buildRhSafetyStructured, renderSafety } from "./rh-mcp-safety.js";
+import { assertAllowedSpender, validateSwapTx, resolveSlippagePct } from "../evm-guard.js";
 import { quoteRh, ensureDirectApproval, ensureSellApprovals, confirmRhSwap, broadcastRhSwap } from "./rh-mcp-swap.js";
 
 export { RH_MCP_TOOLS } from "./rh-mcp-tools.js";
@@ -160,7 +161,7 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
                 v ? formatWei(v, q.to.decimals) : "no pool";
               return `Compared: V2 ${fmt(rc.v2)} · V3 ${fmt(rc.v3)} · V4 ${fmt(rc.v4)} → best wins`;
             })(),
-            `Slippage: ${a.maxSlippagePct ?? 2.0}%`,
+            `Slippage: ${resolveSlippagePct(a.maxSlippagePct)}%`,
             pool?.liquidityUsd != null ? `Pool liq (approx): $${Number(pool.liquidityUsd).toLocaleString()}` : "",
             ``,
             `Run \`rh_mcp_swap\` with same params + \`confirm: true\` to execute.`,
@@ -228,6 +229,10 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
           // Hardcoding the V4 path here silently broke every V2/V3 sell.
           const spender: string =
             quote.allowanceTarget ?? quote.issues?.allowance?.spender ?? RH_PERMIT2;
+          // Hard allowlist BEFORE any approval tx is sent: the quote's spender is untrusted.
+          assertAllowedSpender(RH_CHAIN_ID, spender);
+          // Validate the swap tx itself before spending gas/allowance on approvals.
+          validateSwapTx(tx, { chainId: RH_CHAIN_ID, wallet: wallet.address, maxValueWei: 0n });
           const hashes =
             spender.toLowerCase() === RH_PERMIT2.toLowerCase()
               ? await ensureSellApprovals(wallet, q.from.address, BigInt(q.sellAmount))
@@ -250,7 +255,7 @@ export async function handleRhMcpTool(name: string, args: unknown): Promise<Tool
           }
         }
 
-        const txHash = await broadcastRhSwap(wallet, tx);
+        const txHash = await broadcastRhSwap(wallet, tx, q.from.kind === "eth" ? BigInt(q.sellAmount) : 0n);
         const buyHuman = formatWei(quote.buyAmount ?? "0", q.to.decimals);
         const route = quote.route ?? "uniswap-v4";
         const rc = await confirmRhSwap(txHash, wallet.address, q.to, ethBefore);

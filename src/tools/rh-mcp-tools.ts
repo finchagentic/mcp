@@ -59,7 +59,7 @@ export const RH_MCP_TOOLS: Tool[] = [
         amount: { type: "string", description: "Human amount, e.g. '0.01' ETH or '1000' TOKEN" },
         maxSlippagePct: {
           type: "number",
-          description: "Slippage tolerance % (default 2.0; raise for thin crypto pairs)",
+          description: "Slippage tolerance % (default 1.0, hard cap 5)",
         },
       },
       required: ["fromToken", "toToken", "amount"],
@@ -83,7 +83,7 @@ export const RH_MCP_TOOLS: Tool[] = [
         fromToken: { type: "string", description: "Sell asset: ETH, ticker, or 0x contract address" },
         toToken: { type: "string", description: "Buy asset: ETH, ticker, or 0x contract address" },
         amount: { type: "string", description: "Human amount" },
-        maxSlippagePct: { type: "number", description: "Slippage % (default 2.0)" },
+        maxSlippagePct: { type: "number", description: "Slippage % (default 1.0, max 5)" },
         confirm: {
           type: "boolean",
           description: "Must be true to broadcast. Prevents accidental live swaps.",
