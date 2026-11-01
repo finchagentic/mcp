@@ -160,7 +160,7 @@ export const MARKET_TOOLS: Tool[] = [
       properties: {
         tokenAddress: {
           type: "string",
-          description: "Base-chain ERC-20 contract address, e.g. '0x4b524015d54a27d4472f5c59c570730d69499ba3'",
+          description: "Base-chain ERC-20 contract address, e.g. '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' (USDC on Base)",
         },
       },
       required: ["tokenAddress"],

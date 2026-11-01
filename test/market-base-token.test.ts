@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { handleMarketTool } from "../src/tools/market.js";
 import { clearHttpCache } from "../src/_http-cache.js";
 
-const VALID_ADDRESS = "0x4b524015d54a27d4472f5c59c570730d69499ba3";
+const VALID_ADDRESS = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 
 function jsonResponse(body: unknown, status = 200) {
   return {
