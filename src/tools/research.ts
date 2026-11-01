@@ -81,9 +81,29 @@ async function firecrawlScrape(url: string): Promise<string | null> {
   return null;
 }
 
+const MAX_REDIRECTS = 5;
+
+/** Fetch following redirects MANUALLY, re-validating every hop with assertPublicUrl so a public URL cannot
+ *  bounce the request into loopback / LAN / cloud-metadata space. */
+export async function fetchPublic(url: string, init: RequestInit = {}, maxRedirects = MAX_REDIRECTS): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const unsafe = await assertPublicUrl(current);
+    if (unsafe) throw new Error(`blocked: ${refuseUrlText(current, unsafe)}`);
+    const res = await fetch(current, { ...init, redirect: "manual" });
+    if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
+      current = new URL(res.headers.get("location")!, current).toString();
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+      continue;
+    }
+    return res;
+  }
+  throw new Error(`too many redirects (>${maxRedirects})`);
+}
+
 async function basicFetch(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url, {
+    const res = await fetchPublic(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; FinchBot/1.0)" },
       signal: AbortSignal.timeout(10_000),
     });
